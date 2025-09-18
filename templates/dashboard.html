@@ -118,13 +118,13 @@
                                 <small class="text-muted">packets</small>
                             </div>
                             <div class="text-center mt-1">
-                                <div class="text-secondary">{{ format_bytes(rule.bytes or 0) }}</div>
+                                <div class="text-secondary">{{ rule.bytes or 0 }} B</div>
                                 <small class="text-muted">bytes</small>
                             </div>
                         </td>
                         <td>
                             {% if rule.created_at %}
-                                <small class="text-muted">{{ format_datetime(rule.created_at) }}</small>
+                                <small class="text-muted">{{ rule.created_at }}</small>
                             {% else %}
                                 <small class="text-muted fst-italic">Unknown</small>
                             {% endif %}

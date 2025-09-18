@@ -17,37 +17,6 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-# Template helper functions
-@app.template_filter('format_bytes')
-def format_bytes(bytes_value):
-    """Format bytes to human readable format"""
-    # Handle None, empty string, or non-numeric values
-    if not bytes_value or bytes_value == 0:
-        return '0 B'
-    
-    try:
-        bytes_value = float(bytes_value)
-    except (TypeError, ValueError):
-        return '0 B'
-    
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if bytes_value < 1024:
-            return f"{bytes_value:.1f} {unit}"
-        bytes_value /= 1024
-    return f"{bytes_value:.1f} TB"
-
-@app.template_filter('format_datetime')
-def format_datetime(datetime_str):
-    """Format datetime string to readable format"""
-    if not datetime_str:
-        return 'Unknown'
-    
-    try:
-        dt = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
-        return dt.strftime('%Y-%m-%d %H:%M')
-    except:
-        return datetime_str
-
 # Configuration
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS = os.environ.get('ADMIN_PASS', 'password')

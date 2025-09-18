@@ -21,7 +21,13 @@ app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-producti
 @app.template_filter('format_bytes')
 def format_bytes(bytes_value):
     """Format bytes to human readable format"""
-    if not bytes_value:
+    # Handle None, empty string, or non-numeric values
+    if not bytes_value or bytes_value == 0:
+        return '0 B'
+    
+    try:
+        bytes_value = float(bytes_value)
+    except (TypeError, ValueError):
         return '0 B'
     
     for unit in ['B', 'KB', 'MB', 'GB']:
@@ -55,10 +61,10 @@ WG_CONFIG_PATHS = [
 ]
 
 def get_wireguard_peers():
-    """Get WireGuard peer information from config files"""
+    """Get WireGuard peer information from config files or wg show"""
     peers = []
     
-    # Try to find WireGuard config file
+    # First try to find WireGuard config file (for Docker volume sharing)
     config_file = None
     for path in WG_CONFIG_PATHS:
         if os.path.exists(path):
@@ -66,7 +72,35 @@ def get_wireguard_peers():
             break
     
     if not config_file:
-        return peers
+        # Fallback: Try to get peer info from wg show dump
+        return get_wireguard_peers_from_wg_show()
+
+def get_wireguard_peers_from_wg_show():
+    """Get configured peers info from wg show dump command"""
+    peers = []
+    
+    try:
+        # Use wg show dump for more detailed info
+        result = subprocess.run(['wg', 'show', 'dump'], 
+                              capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            for line in result.stdout.strip().split('\n'):
+                if line and '\t' in line:
+                    parts = line.split('\t')
+                    if len(parts) >= 6:  # wg0, public_key, preshared_key, endpoint, allowed_ips, latest_handshake, transfer
+                        peer = {
+                            'public_key': parts[1][:8] + '...' if parts[1] else 'Unknown',
+                            'allowed_ips': parts[4] if parts[4] else 'Unknown',
+                            'endpoint': parts[3] if parts[3] != '(none)' else None,
+                            'name': f"Peer {len(peers) + 1}",  # Generic name
+                            'server_network': 'Unknown'
+                        }
+                        peers.append(peer)
+    except Exception as e:
+        print(f"Error getting peers from wg show dump: {e}")
+    
+    return peers
     
     try:
         with open(config_file, 'r') as f:
@@ -263,6 +297,11 @@ def dashboard():
             enhanced_rule.update({
                 'packets': matching_stats['packets'],
                 'bytes': matching_stats['bytes']
+            })
+        else:
+            enhanced_rule.update({
+                'packets': 0,
+                'bytes': 0
             })
         
         enhanced_rules.append(enhanced_rule)

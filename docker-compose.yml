@@ -33,6 +33,8 @@ services:
     # build: .  # Uncomment to build locally instead
     container_name: iptablesui
     network_mode: "container:wireguard"  # Share network stack with WireGuard
+    cap_add:
+      - NET_ADMIN  # Required for iptables and wg commands
     depends_on:
       - wireguard
     environment:
@@ -44,5 +46,4 @@ services:
       - ./data:/app/data  # Persist rules.json
     restart: unless-stopped
     # Note: No ports mapping needed - using wireguard's network
-    # Note: No privileged needed - using wireguard's capabilities
-    # Note: No healthcheck needed - can't access from outside network stack
+    # Note: cap_add NET_ADMIN enables iptables and wg commands access

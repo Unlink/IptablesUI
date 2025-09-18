@@ -95,8 +95,44 @@ services:
   iptablesui:
     image: ghcr.io/unlink/iptablesui:latest
     network_mode: "container:wireguard"  # Zdieľaný network stack
+    cap_add:
+      - NET_ADMIN  # Potrebné pre iptables a wg príkazy
     depends_on:
       - wireguard
+```
+
+## Oprávnenia a Bezpečnosť
+
+### Potrebné Docker capabilities
+
+IptablesUI vyžaduje **NET_ADMIN** capability pre:
+- **iptables** príkazy (pridávanie/mazanie firewall pravidiel)
+- **wg** príkazy (čítanie WireGuard peer informácií) 
+- **ip** príkazy (sledovanie sieťových rozhraní)
+
+### Bezpečné nastavenie oprávnení
+
+**Odporúčané (minimálne oprávnenia):**
+```yaml
+cap_add:
+  - NET_ADMIN
+```
+
+**Alternatíva (všetky oprávnenia, menej bezpečné):**
+```yaml
+privileged: true
+```
+
+### Troubleshooting oprávnení
+
+**Chyba "Operation not permitted" pri wg príkazoch:**
+```bash
+# Skontrolujte capabilities
+docker exec iptablesui cat /proc/self/status | grep Cap
+
+# Pridajte NET_ADMIN do docker-compose.yml
+cap_add:
+  - NET_ADMIN
 ```
 
 ### Environment Variables

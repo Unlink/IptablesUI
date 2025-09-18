@@ -118,6 +118,27 @@ docker inspect wireguard | grep -i cap
 docker exec iptablesui iptables -L
 ```
 
+### Problem: WireGuard peers sa nezobrazujú (Operation not permitted)
+```bash
+# Skontrolujte, či IptablesUI má NET_ADMIN capability
+docker inspect iptablesui | grep -i cap
+
+# Pridajte NET_ADMIN do docker-compose.yml
+services:
+  iptablesui:
+    cap_add:
+      - NET_ADMIN
+
+# Reštartujte kontajner
+docker-compose restart iptablesui
+
+# Test wg príkazu v kontajneri
+docker exec iptablesui wg show
+
+# Debug informácie cez API
+curl http://localhost:8080/api/debug/wireguard
+```
+
 ### Problem: Rules sa neukladajú
 ```bash
 # Skontrolujte volume mount

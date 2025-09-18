@@ -25,11 +25,11 @@ if [ $? -eq 0 ]; then
     # Create data directory for persistence
     mkdir -p ./data
     
-    # Start the container
-    echo "🔥 Starting container..."
+    # Start the container with proper capabilities
+    echo "🔥 Starting container with NET_ADMIN capability..."
     docker run -d \
       --name iptablesui \
-      --privileged \
+      --cap-add=NET_ADMIN \
       -p 8080:8080 \
       -e ADMIN_USER=${ADMIN_USER:-admin} \
       -e ADMIN_PASS=${ADMIN_PASS:-password} \
@@ -45,6 +45,7 @@ if [ $? -eq 0 ]; then
         echo ""
         echo "📝 To view logs: docker logs iptablesui"
         echo "🛑 To stop: docker stop iptablesui"
+        echo "🔧 For WireGuard integration, use: docker-compose up -d"
     else
         echo "❌ Failed to start container"
         exit 1

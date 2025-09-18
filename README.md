@@ -151,7 +151,25 @@ docker run -d \
   iptablesui
 ```
 
-**Dôležité:** Kontajner musí bežať s `--privileged` alebo `--cap-add=NET_ADMIN` pre prístup k iptables.
+**Dôležité:** Kontajner musí bežať s `--cap-add=NET_ADMIN` oprávnením pre prístup k iptables a WireGuard príkazom.
+
+**Bezpečné nastavenie:**
+```bash
+docker run -d --name iptablesui \
+  --cap-add=NET_ADMIN \
+  -p 8080:8080 \
+  -v ./data:/app/data \
+  iptablesui
+```
+
+**Alternatívne (menej bezpečné):**
+```bash
+docker run -d --name iptablesui \
+  --privileged \
+  -p 8080:8080 \
+  -v ./data:/app/data \
+  iptablesui
+```
 
 ### WireGuard integrácia (odporúčané)
 
@@ -319,6 +337,12 @@ chmod +x start.sh
 ### Iptables príkazy nefungujú
 - Skontrolujte, či kontajner má prístup k NET_ADMIN capabilities
 - Overte, že iptables je nainštalovaný v kontajneri
+
+### WireGuard peers sa nezobrazujú alebo chyba "Operation not permitted"
+- Overte, že `cap_add: NET_ADMIN` je nastavený v docker-compose.yml
+- Pre network_mode: "container:..." musí mať IptablesUI vlastné NET_ADMIN oprávnenie
+- Skontrolujte logy: `docker-compose logs iptablesui`
+- Použite debug endpoint: http://localhost:8080/api/debug/wireguard
 
 ### Pravidlá sa neukladajú
 - Skontrolujte oprávnienia k súboru rules.json

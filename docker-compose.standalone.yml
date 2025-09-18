@@ -10,7 +10,11 @@ services:
     container_name: iptablesui
     ports:
       - "8080:8080"
-    privileged: true  # Required for iptables access
+    privileged: true  # Required for iptables access on host
+    # Alternative to privileged (more secure):
+    # cap_add:
+    #   - NET_ADMIN
+    #   - NET_RAW  
     network_mode: host  # Access host's network stack
     environment:
       - ADMIN_USER=admin

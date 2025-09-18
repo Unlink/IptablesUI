@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+
+{% block title %}Add Rule - IptablesUI{% endblock %}
+
+{% block content %}
+<!-- Hidden data for JavaScript -->
+<div id="wg-data" 
+     data-server-ip="{% if wg_status.server_ip %}{{ wg_status.server_ip.split('/')[0] }}{% endif %}"
+     style="display: none;"></div>
+
+<!-- WireGuard Hints Section -->
+{% if wg_peers or wg_status.active_peers %}
+<div class="alert alert-info mb-4">
+    <h5><i class="bi bi-lightbulb"></i> WireGuard Quick Hints</h5>
+    <div class="row">
+        {% if wg_status.server_ip %}
+        <div class="col-md-4 mb-2">
+            <strong>Server Network:</strong><br>
+            <code class="text-primary">{{ wg_status.server_ip }}</code>
+            <button class="btn btn-xs btn-outline-primary ms-1" 
+                    onclick="fillIP('dest_ip', '{{ wg_status.server_ip.split('/')[0] if '/' in wg_status.server_ip else wg_status.server_ip }}')"
+                    title="Use as Destination IP">
+                <i class="bi bi-arrow-down"></i>
+            </button>
+        </div>
+        {% endif %}
+        
+        {% if wg_status.active_peers %}
+        <div class="col-md-4 mb-2">
+            <strong>Active Peers:</strong><br>
+            {% for peer in wg_status.active_peers[:3] %}
+                <code class="text-success">{{ peer.allowed_ips.split('/')[0] if peer.allowed_ips and '/' in peer.allowed_ips else peer.allowed_ips }}</code>
+                <button class="btn btn-xs btn-outline-success ms-1" 
+                        onclick="fillIP('source_ip', '{{ peer.allowed_ips.split('/')[0] if peer.allowed_ips and '/' in peer.allowed_ips else peer.allowed_ips }}')"
+                        title="Use as Source IP">
+                    <i class="bi bi-arrow-down"></i>
+                </button>
+                {% if not loop.last %}<br>{% endif %}
+            {% endfor %}
+            {% if wg_status.active_peers|length > 3 %}
+                <small class="text-muted">... and {{ wg_status.active_peers|length - 3 }} more</small>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <div class="col-md-4 mb-2">
+            <strong>Quick Rules:</strong><br>
+            <button type="button" class="btn btn-sm btn-outline-primary me-1 mb-1" 
+                    onclick="fillQuickRule('allow_peers')">Allow All Peers</button>
+            <button type="button" class="btn btn-sm btn-outline-warning me-1 mb-1" 
+                    onclick="fillQuickRule('block_external')">Block External</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-plus-circle"></i> Add New Firewall Rule</h2>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Dashboard
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="bi bi-plus-square"></i> Rule Configuration</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="chain" class="form-label">Chain *</label>
+                                <select class="form-select" id="chain" name="chain" required>
+                                    <option value="">Select Chain</option>
+                                    <option value="INPUT">INPUT (Incoming)</option>
+                                    <option value="FORWARD">FORWARD (Routing)</option>
+                                    <option value="OUTPUT">OUTPUT (Outgoing)</option>
+                                </select>
+                                <div class="form-text">Select the iptables chain</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="action" class="form-label">Action *</label>
+                                <select class="form-select" id="action" name="action" required>
+                                    <option value="">Select Action</option>
+                                    <option value="ACCEPT">ACCEPT (Allow)</option>
+                                    <option value="DROP">DROP (Block silently)</option>
+                                    <option value="REJECT">REJECT (Block with response)</option>
+                                </select>
+                                <div class="form-text">Action to take for matching packets</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="protocol" class="form-label">Protocol</label>
+                        <select class="form-select" id="protocol" name="protocol">
+                            <option value="">Any Protocol</option>
+                            <option value="tcp">TCP</option>
+                            <option value="udp">UDP</option>
+                            <option value="icmp">ICMP</option>
+                        </select>
+                        <div class="form-text">Network protocol (optional)</div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="source_ip" class="form-label">Source IP</label>
+                                <input type="text" class="form-control" id="source_ip" name="source_ip" 
+                                       placeholder="e.g., 192.168.1.0/24 or 10.0.0.1">
+                                <div class="form-text">Source IP address or network (optional)</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="dest_ip" class="form-label">Destination IP</label>
+                                <input type="text" class="form-control" id="dest_ip" name="dest_ip" 
+                                       placeholder="e.g., 192.168.1.0/24 or 10.0.0.1">
+                                <div class="form-text">Destination IP address or network (optional)</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="port" class="form-label">Port</label>
+                        <input type="text" class="form-control" id="port" name="port" 
+                               placeholder="e.g., 80, 443, 8080-8090">
+                        <div class="form-text">Port number or range (only for TCP/UDP)</div>
+                    </div>
+
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <button type="reset" class="btn btn-secondary me-md-2">
+                            <i class="bi bi-arrow-counterclockwise"></i> Reset
+                        </button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> Add Rule
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h6><i class="bi bi-lightbulb"></i> Examples</h6>
+            </div>
+            <div class="card-body">
+                <h6>Common Rules:</h6>
+                <ul class="list-unstyled">
+                    <li><strong>Allow SSH:</strong><br>
+                        <small>Chain: INPUT, Protocol: TCP, Port: 22, Action: ACCEPT</small>
+                    </li>
+                    <li><strong>Allow HTTP:</strong><br>
+                        <small>Chain: INPUT, Protocol: TCP, Port: 80, Action: ACCEPT</small>
+                    </li>
+                    <li><strong>Block specific IP:</strong><br>
+                        <small>Chain: INPUT, Source IP: 1.2.3.4, Action: DROP</small>
+                    </li>
+                    <li><strong>Allow subnet:</strong><br>
+                        <small>Chain: INPUT, Source IP: 192.168.1.0/24, Action: ACCEPT</small>
+                    </li>
+                </ul>
+
+                {% if wg_peers or wg_status.active_peers %}
+                <h6 class="mt-3">WireGuard Examples:</h6>
+                <ul class="list-unstyled">
+                    <li><strong>Allow peer access:</strong><br>
+                        <small>Chain: INPUT, Source IP: [peer IP], Action: ACCEPT</small>
+                    </li>
+                    <li><strong>Block peer from internet:</strong><br>
+                        <small>Chain: FORWARD, Source IP: [peer IP], Action: DROP</small>
+                    </li>
+                    <li><strong>Allow peer to specific port:</strong><br>
+                        <small>Chain: INPUT, Source IP: [peer IP], Protocol: TCP, Port: 80, Action: ACCEPT</small>
+                    </li>
+                    {% if wg_status.server_ip %}
+                    <li><strong>Protect VPN server:</strong><br>
+                        <small>Chain: INPUT, Dest IP: {{ wg_status.server_ip.split('/')[0] }}, Action: ACCEPT</small>
+                    </li>
+                    {% endif %}
+                </ul>
+                {% endif %}
+                
+                <h6 class="mt-3">Tips:</h6>
+                <ul class="list-unstyled">
+                    <li><small><i class="bi bi-check-circle text-success"></i> Rules are applied immediately</small></li>
+                    <li><small><i class="bi bi-save text-info"></i> Rules are auto-saved to JSON</small></li>
+                    <li><small><i class="bi bi-exclamation-triangle text-warning"></i> Be careful with DROP rules</small></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Enable port field only when TCP/UDP is selected
+document.getElementById('protocol').addEventListener('change', function() {
+    const portField = document.getElementById('port');
+    const protocol = this.value;
+    
+    if (protocol === 'tcp' || protocol === 'udp') {
+        portField.disabled = false;
+        portField.placeholder = "e.g., 80, 443, 8080-8090";
+    } else {
+        portField.disabled = true;
+        portField.value = '';
+        portField.placeholder = "N/A for this protocol";
+    }
+});
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('protocol').dispatchEvent(new Event('change'));
+    
+    // Check if there's a suggested IP from sessionStorage
+    const suggestedIP = sessionStorage.getItem('suggested_source_ip');
+    if (suggestedIP) {
+        document.getElementById('source_ip').value = suggestedIP;
+        document.getElementById('source_ip').focus();
+        sessionStorage.removeItem('suggested_source_ip');
+    }
+});
+
+// WireGuard helper functions
+function fillIP(fieldId, ip) {
+    document.getElementById(fieldId).value = ip;
+    document.getElementById(fieldId).focus();
+    
+    // Visual feedback
+    const field = document.getElementById(fieldId);
+    field.classList.add('border-success');
+    setTimeout(() => {
+        field.classList.remove('border-success');
+    }, 2000);
+}
+
+function fillQuickRule(ruleType) {
+    const chainSelect = document.getElementById('chain');
+    const protocolSelect = document.getElementById('protocol');
+    const sourceIP = document.getElementById('source_ip');
+    const destIP = document.getElementById('dest_ip');
+    const actionSelect = document.getElementById('action');
+    
+    if (ruleType === 'allow_peers') {
+        chainSelect.value = 'INPUT';
+        protocolSelect.value = '';
+        // Get server IP from data attribute
+        const serverIP = document.getElementById('wg-data').getAttribute('data-server-ip');
+        if (serverIP) {
+            destIP.value = serverIP;
+        }
+        actionSelect.value = 'ACCEPT';
+    } else if (ruleType === 'block_external') {
+        chainSelect.value = 'FORWARD';
+        protocolSelect.value = '';
+        sourceIP.value = '!10.0.0.0/8';  // Not private networks
+        actionSelect.value = 'DROP';
+    }
+    
+    // Visual feedback
+    [chainSelect, protocolSelect, sourceIP, destIP, actionSelect].forEach(field => {
+        if (field.value) {
+            field.classList.add('border-primary');
+            setTimeout(() => field.classList.remove('border-primary'), 3000);
+        }
+    });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - IptablesUI{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-gear"></i> Settings</h2>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Dashboard
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="bi bi-download"></i> Export Rules</h5>
+            </div>
+            <div class="card-body">
+                <p>Export all current rules to JSON format.</p>
+                <form method="POST">
+                    <button type="submit" name="export" class="btn btn-info">
+                        <i class="bi bi-download"></i> Export Rules
+                    </button>
+                </form>
+                
+                {% if export_data %}
+                <div class="mt-3">
+                    <label for="export_output" class="form-label">Exported Rules:</label>
+                    <textarea class="form-control" id="export_output" rows="10" readonly>{{ export_data }}</textarea>
+                    <button class="btn btn-sm btn-outline-secondary mt-2" onclick="copyToClipboard()">
+                        <i class="bi bi-clipboard"></i> Copy to Clipboard
+                    </button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="bi bi-upload"></i> Import Rules</h5>
+            </div>
+            <div class="card-body">
+                <p>Import rules from JSON format. This will replace all existing rules.</p>
+                <form method="POST">
+                    <div class="mb-3">
+                        <label for="import_data" class="form-label">JSON Data:</label>
+                        <textarea class="form-control" id="import_data" name="import_data" rows="10" 
+                                  placeholder='[{"chain": "INPUT", "protocol": "tcp", "port": "22", "action": "ACCEPT"}]'></textarea>
+                    </div>
+                    <button type="submit" name="import" class="btn btn-warning">
+                        <i class="bi bi-upload"></i> Import & Apply Rules
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="bi bi-info-circle"></i> Status</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Saved Rules:</strong> {{ rules_count }}</p>
+                <p><strong>Rules File:</strong> <code>rules.json</code></p>
+                <p><strong>Status:</strong> 
+                    {% if rules_count > 0 %}
+                        <span class="text-success">Active</span>
+                    {% else %}
+                        <span class="text-muted">No rules saved</span>
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h5><i class="bi bi-exclamation-triangle"></i> Danger Zone</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Clear All Rules</strong></p>
+                <p class="text-muted">This will remove all iptables rules and clear the JSON file. This action cannot be undone.</p>
+                <form method="POST" onsubmit="return confirm('Are you sure you want to clear ALL rules? This cannot be undone!')">
+                    <button type="submit" name="clear" class="btn btn-danger">
+                        <i class="bi bi-trash"></i> Clear All Rules
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h6><i class="bi bi-question-circle"></i> JSON Format Help</h6>
+            </div>
+            <div class="card-body">
+                <p>Rules should be formatted as a JSON array with the following structure:</p>
+                <pre><code>[
+  {
+    "chain": "INPUT",
+    "protocol": "tcp",
+    "source_ip": "192.168.1.0/24",
+    "dest_ip": "",
+    "port": "22",
+    "action": "ACCEPT"
+  },
+  {
+    "chain": "INPUT",
+    "protocol": "tcp",
+    "source_ip": "",
+    "dest_ip": "",
+    "port": "80",
+    "action": "ACCEPT"
+  }
+]</code></pre>
+                <p class="mt-2"><strong>Fields:</strong></p>
+                <ul>
+                    <li><code>chain</code>: INPUT, FORWARD, or OUTPUT</li>
+                    <li><code>protocol</code>: tcp, udp, icmp, or empty for any</li>
+                    <li><code>source_ip</code>: Source IP/network or empty</li>
+                    <li><code>dest_ip</code>: Destination IP/network or empty</li>
+                    <li><code>port</code>: Port number/range or empty</li>
+                    <li><code>action</code>: ACCEPT, DROP, or REJECT</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function copyToClipboard() {
+    const textarea = document.getElementById('export_output');
+    textarea.select();
+    textarea.setSelectionRange(0, 99999); // For mobile devices
+    navigator.clipboard.writeText(textarea.value).then(() => {
+        // Show a temporary success message
+        const button = event.target;
+        const originalText = button.innerHTML;
+        button.innerHTML = '<i class="bi bi-check"></i> Copied!';
+        button.classList.add('btn-success');
+        button.classList.remove('btn-outline-secondary');
+        
+        setTimeout(() => {
+            button.innerHTML = originalText;
+            button.classList.remove('btn-success');
+            button.classList.add('btn-outline-secondary');
+        }, 2000);
+    });
+}
+</script>
+{% endblock %}

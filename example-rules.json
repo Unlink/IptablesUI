@@ -1,0 +1,42 @@
+[
+  {
+    "chain": "INPUT",
+    "protocol": "tcp",
+    "source_ip": "",
+    "dest_ip": "",
+    "port": "22",
+    "action": "ACCEPT"
+  },
+  {
+    "chain": "INPUT",
+    "protocol": "tcp",
+    "source_ip": "",
+    "dest_ip": "",
+    "port": "80",
+    "action": "ACCEPT"
+  },
+  {
+    "chain": "INPUT",
+    "protocol": "tcp",
+    "source_ip": "",
+    "dest_ip": "",
+    "port": "443",
+    "action": "ACCEPT"
+  },
+  {
+    "chain": "INPUT",
+    "protocol": "tcp",
+    "source_ip": "192.168.1.0/24",
+    "dest_ip": "",
+    "port": "",
+    "action": "ACCEPT"
+  },
+  {
+    "chain": "INPUT",
+    "protocol": "",
+    "source_ip": "127.0.0.1",
+    "dest_ip": "",
+    "port": "",
+    "action": "ACCEPT"
+  }
+]

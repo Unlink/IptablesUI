@@ -79,8 +79,11 @@ def get_wireguard_status():
         # If no interfaces found with wg, try common names
         if not wg_interfaces:
             for iface in ['wg0', 'wg1', 'wg-server', 'wireguard']:
-                result = subprocess.run(['ip', 'addr', 'show', iface], 
-                                      capture_output=True, text=True)
+                result = subprocess.run(
+                    ['ip', 'addr', 'show', iface], 
+                    capture_output=True, 
+                    text=True
+                )
                 if result.returncode == 0:
                     wg_interfaces.append(iface)
                     break
@@ -93,8 +96,11 @@ def get_wireguard_status():
         status_info['interface_name'] = wg_interface
         
         # Check if interface exists and get IP
-        result = subprocess.run(['ip', 'addr', 'show', wg_interface], 
-                              capture_output=True, text=True)
+        result = subprocess.run(
+            ['ip', 'addr', 'show', wg_interface], 
+            capture_output=True, 
+            text=True
+        )
         if result.returncode == 0:
             status_info['interface_up'] = True
             # Extract server IP
@@ -105,8 +111,11 @@ def get_wireguard_status():
                         status_info['server_ip'] = ip_match.group(1)
         
         # Get active peer connections
-        result = subprocess.run(['wg', 'show', wg_interface], 
-                              capture_output=True, text=True)
+        result = subprocess.run(
+            ['wg', 'show', wg_interface], 
+            capture_output=True, 
+            text=True
+        )
         if result.returncode == 0:
             current_peer = None
             for line in result.stdout.split('\n'):
@@ -115,8 +124,15 @@ def get_wireguard_status():
                     if current_peer:
                         status_info['active_peers'].append(current_peer)
                     # Extract public key after "peer: "
-                    public_key = line.split('peer: ')[1] if 'peer: ' in line else line.split()[1]
-                    current_peer = {'public_key': public_key[:8] + '...', 'full_key': public_key}
+                    public_key = (
+                        line.split('peer: ')[1] 
+                        if 'peer: ' in line 
+                        else line.split()[1]
+                    )
+                    current_peer = {
+                        'public_key': public_key[:8] + '...', 
+                        'full_key': public_key
+                    }
                 elif current_peer and line.startswith('allowed ips:'):
                     current_peer['allowed_ips'] = line.split('allowed ips: ')[1]
                 elif current_peer and line.startswith('endpoint:'):
@@ -124,8 +140,10 @@ def get_wireguard_status():
                 elif current_peer and line.startswith('latest handshake:'):
                     handshake = line.split('latest handshake: ')[1]
                     current_peer['last_handshake'] = handshake
-                    # Consider peer active if handshake is recent (less than 5 minutes ago)
-                    current_peer['is_active'] = 'minute' in handshake or 'second' in handshake
+                    # Consider peer active if handshake is recent (less than 5 min ago)
+                    current_peer['is_active'] = (
+                        'minute' in handshake or 'second' in handshake
+                    )
                 elif current_peer and line.startswith('transfer:'):
                     current_peer['transfer'] = line.split('transfer: ')[1]
             
@@ -343,7 +361,10 @@ def api_delete_rule(rule_index):
             save_rules_to_json(saved_rules)
             return {'success': True, 'message': 'Rule deleted successfully'}
         else:
-            return {'success': False, 'error': 'Failed to delete rule from iptables'}, 500
+            return (
+                {'success': False, 'error': 'Failed to delete rule from iptables'}, 
+                500
+            )
             
     except Exception as e:
         return {'success': False, 'error': str(e)}, 500
@@ -399,7 +420,12 @@ def debug_wireguard():
 def get_current_rules():
     """Get current iptables rules"""
     try:
-        result = subprocess.run(['iptables', '-S'], capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            ['iptables', '-S'], 
+            capture_output=True, 
+            text=True, 
+            check=True
+        )
         rules = []
         for line in result.stdout.strip().split('\n'):
             if line.strip() and not line.startswith('-P'):  # Skip policy lines
@@ -470,9 +496,22 @@ def apply_iptables_rule(rule_data):
     try:
         # Check if iptables is available
         try:
-            subprocess.run(['iptables', '--version'], capture_output=True, check=True, timeout=5)
-        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-            return False, "iptables is not available. Make sure you're running in a container with NET_ADMIN capability."
+            subprocess.run(
+                ['iptables', '--version'], 
+                capture_output=True, 
+                check=True, 
+                timeout=5
+            )
+        except (
+            subprocess.CalledProcessError, 
+            FileNotFoundError, 
+            subprocess.TimeoutExpired
+        ):
+            return (
+                False, 
+                "iptables is not available. Make sure you're running in a "
+                "container with NET_ADMIN capability."
+            )
         
         cmd = ['iptables', '-A', rule_data['chain']]
         
@@ -509,7 +548,13 @@ def apply_iptables_rule(rule_data):
         # Log the command for debugging
         print(f"Executing iptables command: {' '.join(cmd)}")
         
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10)
+        result = subprocess.run(
+            cmd, 
+            capture_output=True, 
+            text=True, 
+            check=True, 
+            timeout=10
+        )
         print(f"Applied rule successfully: {' '.join(cmd)}")
         return True, "Rule applied successfully"
         
@@ -620,7 +665,13 @@ def delete_iptables_rule(rule_data):
         # Log the command for debugging
         print(f"Executing iptables delete command: {' '.join(cmd)}")
         
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10)
+        result = subprocess.run(
+            cmd, 
+            capture_output=True, 
+            text=True, 
+            check=True, 
+            timeout=10
+        )
         print(f"Deleted rule successfully: {' '.join(cmd)}")
         return True
         
@@ -705,4 +756,3 @@ def initialize_app():
 if __name__ == '__main__':
     initialize_app()
     app.run(host='0.0.0.0', port=8080, debug=False)
-    

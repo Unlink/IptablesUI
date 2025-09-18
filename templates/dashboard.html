@@ -118,13 +118,28 @@
                                 <small class="text-muted">packets</small>
                             </div>
                             <div class="text-center mt-1">
-                                <div class="text-secondary">{{ format_bytes(rule.bytes or 0) }}</div>
+                                <div class="text-secondary">
+                                    {% if rule.bytes and rule.bytes > 0 %}
+                                        {% set bytes_val = rule.bytes|float %}
+                                        {% if bytes_val >= 1073741824 %}
+                                            {{ "%.1f"|format(bytes_val / 1073741824) }} GB
+                                        {% elif bytes_val >= 1048576 %}
+                                            {{ "%.1f"|format(bytes_val / 1048576) }} MB
+                                        {% elif bytes_val >= 1024 %}
+                                            {{ "%.1f"|format(bytes_val / 1024) }} KB
+                                        {% else %}
+                                            {{ bytes_val|int }} B
+                                        {% endif %}
+                                    {% else %}
+                                        0 B
+                                    {% endif %}
+                                </div>
                                 <small class="text-muted">bytes</small>
                             </div>
                         </td>
                         <td>
                             {% if rule.created_at %}
-                                <small class="text-muted">{{ format_datetime(rule.created_at) }}</small>
+                                <small class="text-muted">{{ rule.created_at }}</small>
                             {% else %}
                                 <small class="text-muted fst-italic">Unknown</small>
                             {% endif %}

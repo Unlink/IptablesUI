@@ -133,6 +133,13 @@
                         <div class="form-text">Port number or range (only for TCP/UDP)</div>
                     </div>
 
+                    <div class="mb-4">
+                        <label for="comment" class="form-label">Comment/Note</label>
+                        <input type="text" class="form-control" id="comment" name="comment" 
+                               maxlength="255" placeholder="e.g., Allow web traffic, Block suspicious IP">
+                        <div class="form-text">Optional description for this rule (max 255 characters)</div>
+                    </div>
+
                     <div class="d-grid gap-2 d-md-flex justify-content-md-end">
                         <button type="reset" class="btn btn-secondary me-md-2">
                             <i class="bi bi-arrow-counterclockwise"></i> Reset
@@ -247,6 +254,7 @@ function fillQuickRule(ruleType) {
     const sourceIP = document.getElementById('source_ip');
     const destIP = document.getElementById('dest_ip');
     const actionSelect = document.getElementById('action');
+    const commentField = document.getElementById('comment');
     
     if (ruleType === 'allow_peers') {
         chainSelect.value = 'INPUT';
@@ -257,15 +265,17 @@ function fillQuickRule(ruleType) {
             destIP.value = serverIP;
         }
         actionSelect.value = 'ACCEPT';
+        commentField.value = 'Allow WireGuard peers access';
     } else if (ruleType === 'block_external') {
         chainSelect.value = 'FORWARD';
         protocolSelect.value = '';
         sourceIP.value = '!10.0.0.0/8';  // Not private networks
         actionSelect.value = 'DROP';
+        commentField.value = 'Block external networks (non-private)';
     }
     
     // Visual feedback
-    [chainSelect, protocolSelect, sourceIP, destIP, actionSelect].forEach(field => {
+    [chainSelect, protocolSelect, sourceIP, destIP, actionSelect, commentField].forEach(field => {
         if (field.value) {
             field.classList.add('border-primary');
             setTimeout(() => field.classList.remove('border-primary'), 3000);

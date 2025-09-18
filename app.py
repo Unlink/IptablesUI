@@ -9,11 +9,38 @@ import subprocess
 import glob
 import configparser
 import re
+from datetime import datetime
+import re
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+# Template helper functions
+@app.template_filter('format_bytes')
+def format_bytes(bytes_value):
+    """Format bytes to human readable format"""
+    if not bytes_value:
+        return '0 B'
+    
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if bytes_value < 1024:
+            return f"{bytes_value:.1f} {unit}"
+        bytes_value /= 1024
+    return f"{bytes_value:.1f} TB"
+
+@app.template_filter('format_datetime')
+def format_datetime(datetime_str):
+    """Format datetime string to readable format"""
+    if not datetime_str:
+        return 'Unknown'
+    
+    try:
+        dt = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+        return dt.strftime('%Y-%m-%d %H:%M')
+    except:
+        return datetime_str
 
 # Configuration
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
@@ -213,14 +240,39 @@ def logout():
 def dashboard():
     """Dashboard - show current iptables rules"""
     rules = get_current_rules()
+    rules_stats = get_iptables_statistics()
     wg_peers = get_wireguard_peers()
     wg_status = get_wireguard_status()
+    
+    # Merge saved rules with current statistics
+    saved_rules = load_rules_from_json()
+    enhanced_rules = []
+    
+    for saved_rule in saved_rules:
+        # Find matching statistics for this rule
+        matching_stats = None
+        for stat in rules_stats:
+            if (stat['chain'] == saved_rule.get('chain') and
+                stat['target'] == saved_rule.get('action') and
+                stat['protocol'] == saved_rule.get('protocol', '')):
+                matching_stats = stat
+                break
+        
+        enhanced_rule = saved_rule.copy()
+        if matching_stats:
+            enhanced_rule.update({
+                'packets': matching_stats['packets'],
+                'bytes': matching_stats['bytes']
+            })
+        
+        enhanced_rules.append(enhanced_rule)
+    
     return render_template('dashboard.html', 
-                         rules=rules, 
+                         rules=rules,
+                         enhanced_rules=enhanced_rules,
+                         rules_stats=rules_stats,
                          wg_peers=wg_peers, 
-                         wg_status=wg_status)
-
-@app.route('/add-rule', methods=['GET', 'POST'])
+                         wg_status=wg_status)@app.route('/add-rule', methods=['GET', 'POST'])
 @login_required
 def add_rule():
     """Add new iptables rule"""
@@ -231,15 +283,20 @@ def add_rule():
         dest_ip = request.form.get('dest_ip', '')
         port = request.form.get('port', '')
         action = request.form['action']
+        comment = request.form.get('comment', '').strip()
         
-        # Create rule
+        # Create rule with comment and initial packet count
         rule_data = {
             'chain': chain,
             'protocol': protocol,
             'source_ip': source_ip,
             'dest_ip': dest_ip,
             'port': port,
-            'action': action
+            'action': action,
+            'comment': comment,
+            'created_at': datetime.now().isoformat(),
+            'packets': 0,
+            'bytes': 0
         }
         
         # Apply rule to iptables
@@ -317,6 +374,42 @@ def api_wireguard_status():
         'success': True
     }
 
+@app.route('/api/iptables/statistics')
+@login_required
+def api_iptables_statistics():
+    """API endpoint to get iptables statistics"""
+    stats = get_iptables_statistics()
+    return {
+        'statistics': stats,
+        'success': True
+    }
+
+@app.route('/api/rule/delete/<int:rule_index>', methods=['DELETE'])
+@login_required
+def api_delete_rule(rule_index):
+    """API endpoint to delete a rule"""
+    try:
+        saved_rules = load_rules_from_json()
+        
+        if rule_index < 0 or rule_index >= len(saved_rules):
+            return {'success': False, 'error': 'Rule index out of range'}, 400
+        
+        rule_to_delete = saved_rules[rule_index]
+        
+        # Try to remove from iptables (construct delete command)
+        delete_success = delete_iptables_rule(rule_to_delete)
+        
+        if delete_success:
+            # Remove from saved rules
+            saved_rules.pop(rule_index)
+            save_rules_to_json(saved_rules)
+            return {'success': True, 'message': 'Rule deleted successfully'}
+        else:
+            return {'success': False, 'error': 'Failed to delete rule from iptables'}, 500
+            
+    except Exception as e:
+        return {'success': False, 'error': str(e)}, 500
+
 @app.route('/api/debug/wireguard')
 @login_required
 def debug_wireguard():
@@ -378,6 +471,62 @@ def get_current_rules():
         print(f"Error getting iptables rules: {e}")
         return []
 
+def get_iptables_statistics():
+    """Get iptables rules with packet and byte counters"""
+    try:
+        result = subprocess.run(['iptables', '-L', '-n', '-v'], 
+                              capture_output=True, text=True, check=True)
+        
+        rules_stats = []
+        current_chain = None
+        
+        for line in result.stdout.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Chain header
+            if line.startswith('Chain '):
+                current_chain = line.split()[1]
+                continue
+                
+            # Skip column headers
+            if line.startswith('pkts') or line.startswith('target'):
+                continue
+                
+            # Parse rule line with stats
+            if current_chain and line:
+                parts = line.split()
+                if len(parts) >= 6:
+                    try:
+                        rule_stat = {
+                            'chain': current_chain,
+                            'packets': int(parts[0]) if parts[0].isdigit() else 0,
+                            'bytes': int(parts[1]) if parts[1].isdigit() else 0,
+                            'target': parts[2] if len(parts) > 2 else '',
+                            'protocol': parts[3] if len(parts) > 3 else '',
+                            'source': parts[7] if len(parts) > 7 else '',
+                            'destination': parts[8] if len(parts) > 8 else '',
+                            'comment': extract_comment_from_rule_line(' '.join(parts))
+                        }
+                        rules_stats.append(rule_stat)
+                    except (ValueError, IndexError):
+                        continue
+                        
+        return rules_stats
+    except subprocess.CalledProcessError as e:
+        print(f"Error getting iptables statistics: {e}")
+        return []
+
+def extract_comment_from_rule_line(rule_line):
+    """Extract comment from iptables rule line"""
+    if '/* ' in rule_line and ' */' in rule_line:
+        start = rule_line.find('/* ') + 3
+        end = rule_line.find(' */')
+        if start < end:
+            return rule_line[start:end]
+    return ''
+
 def apply_iptables_rule(rule_data):
     """Apply a single iptables rule"""
     try:
@@ -411,6 +560,11 @@ def apply_iptables_rule(rule_data):
             if port and not validate_port(port):
                 return False, f"Invalid port format: {port}"
             cmd.extend(['--dport', port])
+        
+        # Add comment if provided (iptables comment module)
+        if rule_data.get('comment'):
+            comment = rule_data['comment'][:255]  # iptables comment limit
+            cmd.extend(['-m', 'comment', '--comment', comment])
         
         cmd.extend(['-j', rule_data['action']])
         
@@ -485,6 +639,59 @@ def validate_port(port_str):
             port = int(port_str)
             return 1 <= port <= 65535
     except (ValueError, AttributeError):
+        return False
+
+def delete_iptables_rule(rule_data):
+    """Delete a single iptables rule"""
+    try:
+        # Check if iptables is available
+        try:
+            subprocess.run(['iptables', '--version'], capture_output=True, check=True, timeout=5)
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            print("iptables is not available")
+            return False
+        
+        # Construct delete command (replace -A with -D)
+        cmd = ['iptables', '-D', rule_data['chain']]
+        
+        if rule_data['protocol']:
+            cmd.extend(['-p', rule_data['protocol']])
+        
+        if rule_data['source_ip']:
+            source_ip = rule_data['source_ip'].strip()
+            if source_ip:
+                cmd.extend(['-s', source_ip])
+        
+        if rule_data['dest_ip']:
+            dest_ip = rule_data['dest_ip'].strip()
+            if dest_ip:
+                cmd.extend(['-d', dest_ip])
+        
+        if rule_data['port'] and rule_data['protocol'] in ['tcp', 'udp']:
+            port = rule_data['port'].strip()
+            if port:
+                cmd.extend(['--dport', port])
+        
+        # Add comment if provided
+        if rule_data.get('comment'):
+            comment = rule_data['comment'][:255]
+            cmd.extend(['-m', 'comment', '--comment', comment])
+        
+        cmd.extend(['-j', rule_data['action']])
+        
+        # Log the command for debugging
+        print(f"Executing iptables delete command: {' '.join(cmd)}")
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10)
+        print(f"Deleted rule successfully: {' '.join(cmd)}")
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        print(f"Error deleting rule (may not exist): {e}")
+        # Don't fail if rule doesn't exist - it might have been manually deleted
+        return True
+    except Exception as e:
+        print(f"Error deleting rule: {e}")
         return False
 
 def save_rule_to_json(rule_data):

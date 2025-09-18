@@ -55,10 +55,13 @@
     </div>
 </div>
 
-{% if rules %}
+{% if enhanced_rules %}
 <div class="card">
-    <div class="card-header">
-        <h5 class="mb-0">Active Rules ({{ rules|length }})</h5>
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">Managed Rules ({{ enhanced_rules|length }})</h5>
+        <button class="btn btn-sm btn-outline-primary" onclick="refreshStatistics()">
+            <i class="bi bi-arrow-clockwise"></i> Refresh Stats
+        </button>
     </div>
     <div class="card-body">
         <div class="table-responsive">
@@ -66,15 +69,101 @@
                 <thead>
                     <tr>
                         <th>#</th>
-                        <th>Rule</th>
-                        <th>Details</th>
+                        <th>Rule Details</th>
+                        <th>Comment</th>
+                        <th>Statistics</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for rule in enhanced_rules %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td>
+                            <div class="mb-1">
+                                <span class="badge bg-primary">{{ rule.chain }}</span>
+                                {% if rule.protocol %}
+                                    <span class="badge bg-light text-dark">{{ rule.protocol.upper() }}</span>
+                                {% endif %}
+                                
+                                {% if rule.action == 'ACCEPT' %}
+                                    <span class="badge bg-success">{{ rule.action }}</span>
+                                {% elif rule.action == 'DROP' %}
+                                    <span class="badge bg-danger">{{ rule.action }}</span>
+                                {% elif rule.action == 'REJECT' %}
+                                    <span class="badge bg-warning">{{ rule.action }}</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ rule.action }}</span>
+                                {% endif %}
+                            </div>
+                            <small class="text-muted">
+                                {% if rule.source_ip %}From: <code>{{ rule.source_ip }}</code>{% endif %}
+                                {% if rule.dest_ip %}To: <code>{{ rule.dest_ip }}</code>{% endif %}
+                                {% if rule.port %}Port: <code>{{ rule.port }}</code>{% endif %}
+                            </small>
+                        </td>
+                        <td>
+                            {% if rule.comment %}
+                                <span class="text-muted" title="{{ rule.comment }}">
+                                    <i class="bi bi-sticky"></i> {{ rule.comment[:30] }}{% if rule.comment|length > 30 %}...{% endif %}
+                                </span>
+                            {% else %}
+                                <span class="text-muted fst-italic">No comment</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="text-center">
+                                <div class="fw-bold text-primary">{{ rule.packets or 0 }}</div>
+                                <small class="text-muted">packets</small>
+                            </div>
+                            <div class="text-center mt-1">
+                                <div class="text-secondary">{{ format_bytes(rule.bytes or 0) }}</div>
+                                <small class="text-muted">bytes</small>
+                            </div>
+                        </td>
+                        <td>
+                            {% if rule.created_at %}
+                                <small class="text-muted">{{ format_datetime(rule.created_at) }}</small>
+                            {% else %}
+                                <small class="text-muted fst-italic">Unknown</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-danger" 
+                                    onclick="deleteRule({{ loop.index0 }})" 
+                                    title="Delete rule">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% if rules %}
+<div class="card mt-3">
+    <div class="card-header">
+        <h6 class="mb-0">Raw iptables Rules ({{ rules|length }})</h6>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Raw Rule</th>
+                        <th>Type</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for rule in rules %}
                     <tr>
                         <td>{{ loop.index }}</td>
-                        <td><code>{{ rule }}</code></td>
+                        <td><code class="small">{{ rule }}</code></td>
                         <td>
                             {% if 'INPUT' in rule %}
                                 <span class="badge bg-info">INPUT</span>
@@ -91,14 +180,6 @@
                             {% elif 'REJECT' in rule %}
                                 <span class="badge bg-warning">REJECT</span>
                             {% endif %}
-                            
-                            {% if '-p tcp' in rule %}
-                                <span class="badge bg-light text-dark">TCP</span>
-                            {% elif '-p udp' in rule %}
-                                <span class="badge bg-light text-dark">UDP</span>
-                            {% elif '-p icmp' in rule %}
-                                <span class="badge bg-light text-dark">ICMP</span>
-                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}
@@ -107,6 +188,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 {% else %}
 <div class="alert alert-info text-center">
     <h4><i class="bi bi-info-circle"></i> No Rules Found</h4>
@@ -317,6 +399,46 @@ function showDebugInfo() {
             console.error('Error:', error);
             alert('Error getting debug info');
         });
+}
+
+function refreshStatistics() {
+    fetch('/api/iptables/statistics')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload(); // Simple reload for now
+            } else {
+                alert('Failed to refresh statistics');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error refreshing statistics');
+        });
+}
+
+function deleteRule(index) {
+    if (confirm('Are you sure you want to delete this rule? This will remove it from both iptables and the saved configuration.')) {
+        fetch(`/api/rule/delete/${index}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Rule deleted successfully!');
+                location.reload();
+            } else {
+                alert(`Failed to delete rule: ${data.error}`);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error deleting rule');
+        });
+    }
 }
 </script>
 {% endblock %}

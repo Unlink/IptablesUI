@@ -272,5 +272,96 @@ function fillQuickRule(ruleType) {
         }
     });
 }
+
+function validateIPAddress(ip) {
+    // Simple IP address or CIDR validation
+    const ipRegex = /^(?:(?:\d{1,3}\.){3}\d{1,3}(?:\/\d{1,2})?|!(?:\d{1,3}\.){3}\d{1,3}(?:\/\d{1,2})?)$/;
+    return ipRegex.test(ip);
+}
+
+function validatePort(port) {
+    if (!port) return true;
+    if (port.includes(':')) {
+        // Port range
+        const [start, end] = port.split(':');
+        const startPort = parseInt(start) || 1;
+        const endPort = parseInt(end) || 65535;
+        return startPort >= 1 && endPort <= 65535 && startPort <= endPort;
+    } else {
+        // Single port
+        const p = parseInt(port);
+        return p >= 1 && p <= 65535;
+    }
+}
+
+// Form validation before submission
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('form');
+    const sourceIP = document.getElementById('source_ip');
+    const destIP = document.getElementById('dest_ip');
+    const portField = document.getElementById('port');
+    
+    form.addEventListener('submit', function(e) {
+        let isValid = true;
+        const errors = [];
+        
+        // Validate source IP
+        if (sourceIP.value && !validateIPAddress(sourceIP.value)) {
+            isValid = false;
+            sourceIP.classList.add('is-invalid');
+            errors.push('Invalid source IP address format');
+        } else {
+            sourceIP.classList.remove('is-invalid');
+        }
+        
+        // Validate destination IP
+        if (destIP.value && !validateIPAddress(destIP.value)) {
+            isValid = false;
+            destIP.classList.add('is-invalid');
+            errors.push('Invalid destination IP address format');
+        } else {
+            destIP.classList.remove('is-invalid');
+        }
+        
+        // Validate port
+        if (portField.value && !validatePort(portField.value)) {
+            isValid = false;
+            portField.classList.add('is-invalid');
+            errors.push('Invalid port number (1-65535) or range (e.g. 8000:9000)');
+        } else {
+            portField.classList.remove('is-invalid');
+        }
+        
+        // Show validation errors
+        if (!isValid) {
+            e.preventDefault();
+            alert('Validation errors:\n' + errors.join('\n'));
+        }
+    });
+    
+    // Real-time validation
+    [sourceIP, destIP].forEach(field => {
+        field.addEventListener('blur', function() {
+            if (this.value && !validateIPAddress(this.value)) {
+                this.classList.add('is-invalid');
+                // Show tooltip or error message
+                this.title = 'Invalid IP format. Use: 192.168.1.1 or 192.168.1.0/24';
+            } else {
+                this.classList.remove('is-invalid');
+                this.title = '';
+            }
+        });
+    });
+    
+    portField.addEventListener('blur', function() {
+        if (this.value && !validatePort(this.value)) {
+            this.classList.add('is-invalid');
+            this.title = 'Use single port (80) or range (8000:9000)';
+        } else {
+            this.classList.remove('is-invalid');
+            this.title = '';
+        }
+    });
+});
 </script>
 {% endblock %}

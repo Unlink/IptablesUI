@@ -243,13 +243,23 @@ def add_rule():
         }
         
         # Apply rule to iptables
-        if apply_iptables_rule(rule_data):
-            # Save to JSON
+        result = apply_iptables_rule(rule_data)
+        if isinstance(result, tuple):
+            success, error_msg = result
+            if success:
+                # Save to JSON
+                save_rule_to_json(rule_data)
+                flash('Rule added successfully!', 'success')
+                return redirect(url_for('dashboard'))
+            else:
+                flash(f'Failed to add rule: {error_msg}', 'error')
+        elif result:
+            # Backward compatibility - if it returns just boolean True
             save_rule_to_json(rule_data)
             flash('Rule added successfully!', 'success')
             return redirect(url_for('dashboard'))
         else:
-            flash('Failed to add rule!', 'error')
+            flash('Failed to add rule: Unknown error', 'error')
     
     return render_template('add_rule.html', 
                          wg_peers=get_wireguard_peers(), 
@@ -371,27 +381,110 @@ def get_current_rules():
 def apply_iptables_rule(rule_data):
     """Apply a single iptables rule"""
     try:
+        # Check if iptables is available
+        try:
+            subprocess.run(['iptables', '--version'], capture_output=True, check=True, timeout=5)
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            return False, "iptables is not available. Make sure you're running in a container with NET_ADMIN capability."
+        
         cmd = ['iptables', '-A', rule_data['chain']]
         
         if rule_data['protocol']:
             cmd.extend(['-p', rule_data['protocol']])
         
         if rule_data['source_ip']:
-            cmd.extend(['-s', rule_data['source_ip']])
+            # Validate IP/CIDR format
+            source_ip = rule_data['source_ip'].strip()
+            if source_ip and not validate_ip_address(source_ip):
+                return False, f"Invalid source IP format: {source_ip}"
+            cmd.extend(['-s', source_ip])
         
         if rule_data['dest_ip']:
-            cmd.extend(['-d', rule_data['dest_ip']])
+            # Validate IP/CIDR format
+            dest_ip = rule_data['dest_ip'].strip()
+            if dest_ip and not validate_ip_address(dest_ip):
+                return False, f"Invalid destination IP format: {dest_ip}"
+            cmd.extend(['-d', dest_ip])
         
         if rule_data['port'] and rule_data['protocol'] in ['tcp', 'udp']:
-            cmd.extend(['--dport', rule_data['port']])
+            port = rule_data['port'].strip()
+            if port and not validate_port(port):
+                return False, f"Invalid port format: {port}"
+            cmd.extend(['--dport', port])
         
         cmd.extend(['-j', rule_data['action']])
         
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        print(f"Applied rule: {' '.join(cmd)}")
-        return True
+        # Log the command for debugging
+        print(f"Executing iptables command: {' '.join(cmd)}")
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10)
+        print(f"Applied rule successfully: {' '.join(cmd)}")
+        return True, "Rule applied successfully"
+        
+    except ValueError as e:
+        print(f"Validation error: {e}")
+        return False, str(e)
+    except subprocess.TimeoutExpired:
+        error_msg = "iptables command timed out"
+        print(f"Error applying rule: {error_msg}")
+        return False, error_msg
     except subprocess.CalledProcessError as e:
-        print(f"Error applying rule: {e}")
+        error_msg = f"iptables command failed (exit code {e.returncode})"
+        if e.stderr:
+            error_msg += f": {e.stderr.strip()}"
+        else:
+            # Common iptables error codes
+            if e.returncode == 1:
+                error_msg += ": General error or invalid argument"
+            elif e.returncode == 2:
+                error_msg += ": Invalid command syntax"
+            elif e.returncode == 3:
+                error_msg += ": Kernel version doesn't support iptables"
+            elif e.returncode == 4:
+                error_msg += ": Invalid IP address, port, or target specification"
+                error_msg += "\nHint: Check if destination IP is a network address (ends with .0) - use CIDR notation like 192.168.160.0/24 instead"
+        
+        print(f"Error applying rule: {error_msg}")
+        print(f"Command that failed: {' '.join(cmd)}")
+        return False, error_msg
+    except Exception as e:
+        error_msg = f"Unexpected error: {str(e)}"
+        print(f"Error applying rule: {error_msg}")
+        return False, error_msg
+
+def validate_ip_address(ip_str):
+    """Validate IP address or CIDR notation"""
+    if not ip_str:
+        return True
+    
+    try:
+        import ipaddress
+        # Try to parse as IP address or network
+        if '/' in ip_str:
+            ipaddress.ip_network(ip_str, strict=False)
+        else:
+            ipaddress.ip_address(ip_str)
+        return True
+    except ValueError:
+        return False
+
+def validate_port(port_str):
+    """Validate port number or range"""
+    if not port_str:
+        return True
+    
+    try:
+        if ':' in port_str:
+            # Port range
+            start, end = port_str.split(':')
+            start_port = int(start) if start else 1
+            end_port = int(end) if end else 65535
+            return 1 <= start_port <= 65535 and 1 <= end_port <= 65535 and start_port <= end_port
+        else:
+            # Single port
+            port = int(port_str)
+            return 1 <= port <= 65535
+    except (ValueError, AttributeError):
         return False
 
 def save_rule_to_json(rule_data):
@@ -423,10 +516,27 @@ def apply_all_rules():
     """Apply all rules from JSON file"""
     rules = load_rules_from_json()
     success_count = 0
+    failed_rules = []
+    
     for rule in rules:
-        if apply_iptables_rule(rule):
+        result = apply_iptables_rule(rule)
+        if isinstance(result, tuple):
+            success, error_msg = result
+            if success:
+                success_count += 1
+            else:
+                failed_rules.append(f"Rule {rule}: {error_msg}")
+        elif result:
             success_count += 1
+        else:
+            failed_rules.append(f"Rule {rule}: Unknown error")
+    
     print(f"Applied {success_count}/{len(rules)} rules from JSON")
+    if failed_rules:
+        for failed in failed_rules:
+            print(f"Failed: {failed}")
+    
+    return success_count, failed_rules
 
 def clear_all_rules():
     """Clear all iptables rules and JSON file"""

@@ -118,6 +118,8 @@ def get_wireguard_status():
                     current_peer = {'public_key': public_key[:8] + '...', 'full_key': public_key}
                 elif current_peer and line.startswith('allowed ips:'):
                     current_peer['allowed_ips'] = line.split('allowed ips: ')[1]
+                elif current_peer and line.startswith('endpoint:'):
+                    current_peer['endpoint'] = line.split('endpoint: ')[1]
                 elif current_peer and line.startswith('latest handshake:'):
                     handshake = line.split('latest handshake: ')[1]
                     current_peer['last_handshake'] = handshake

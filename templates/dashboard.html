@@ -236,17 +236,14 @@
                                 </td>
                                 <td>{{ peer.endpoint if peer.endpoint else '-' }}</td>
                                 <td>
-                                    {% if peer.latest_handshake %}
-                                        {{ format_datetime(peer.latest_handshake) }}
+                                    {% if peer.last_handshake %}
+                                        <small>{{ peer.last_handshake }}</small>
                                     {% else %}
                                         <span class="text-muted">Never</span>
                                     {% endif %}
                                 </td>
                                 <td>
-                                    <small>
-                                        ↓ {{ format_bytes(peer.transfer_rx or 0) }}<br>
-                                        ↑ {{ format_bytes(peer.transfer_tx or 0) }}
-                                    </small>
+                                    <small>{{ peer.transfer or '0 B received, 0 B sent' }}</small>
                                 </td>
                                 <td>
                                     <button class="btn btn-sm btn-outline-secondary" onclick="debugWireGuard()">

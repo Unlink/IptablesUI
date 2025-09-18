@@ -272,7 +272,9 @@ def dashboard():
                          enhanced_rules=enhanced_rules,
                          rules_stats=rules_stats,
                          wg_peers=wg_peers, 
-                         wg_status=wg_status)@app.route('/add-rule', methods=['GET', 'POST'])
+                         wg_status=wg_status)
+
+@app.route('/add-rule', methods=['GET', 'POST'])
 @login_required
 def add_rule():
     """Add new iptables rule"""

@@ -200,70 +200,26 @@
 {% endif %}
 
 <!-- WireGuard Peers Section -->
-{% if wg_peers or wg_status.active_peers %}
+{% if wg_status.active_peers %}
 <div class="row mt-4">
     <div class="col-12">
         <div class="card">
             <div class="card-header">
-                <h5><i class="bi bi-people"></i> WireGuard Peers 
-                    <span class="badge bg-primary">{{ wg_peers|length }} configured</span>
+                <h5><i class="bi bi-people"></i> WireGuard Active Peers 
                     <span class="badge bg-success">{{ wg_status.active_peers|length }} active</span>
                 </h5>
             </div>
             <div class="card-body">
-                {% if wg_peers %}
-                <div class="row">
-                    {% for peer in wg_peers %}
-                    <div class="col-md-6 mb-3">
-                        <div class="card border-left-primary">
-                            <div class="card-body p-3">
-                                <div class="d-flex justify-content-between align-items-start">
-                                    <div>
-                                        <h6 class="mb-1">
-                                            {% if peer.name %}{{ peer.name }}{% else %}Peer {{ loop.index }}{% endif %}
-                                        </h6>
-                                        <p class="mb-1"><small><strong>Allowed IPs:</strong> 
-                                            <code class="text-primary">{{ peer.allowed_ips }}</code>
-                                            <button class="btn btn-xs btn-outline-primary ms-1" 
-                                                    onclick="copyToSourceIP('{{ peer.allowed_ips.split('/')[0] if '/' in peer.allowed_ips else peer.allowed_ips }}')"
-                                                    title="Copy to Source IP field">
-                                                <i class="bi bi-clipboard"></i>
-                                            </button>
-                                        </small></p>
-                                        <p class="mb-0"><small><strong>Key:</strong> <code>{{ peer.public_key }}</code></small></p>
-                                        {% if peer.endpoint %}
-                                        <p class="mb-0"><small><strong>Endpoint:</strong> <code>{{ peer.endpoint }}</code></small></p>
-                                        {% endif %}
-                                    </div>
-                                    <div>
-                                        {% set active_peer = wg_status.active_peers | selectattr('public_key', 'equalto', peer.public_key) | first %}
-                                        {% if active_peer %}
-                                            <span class="badge bg-success">Online</span>
-                                        {% else %}
-                                            <span class="badge bg-secondary">Offline</span>
-                                        {% endif %}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <p class="text-muted mb-0">No WireGuard peers configured or config file not accessible.</p>
-                {% endif %}
-                
-                {% if wg_status.active_peers %}
-                <hr>
-                <h6><i class="bi bi-activity"></i> Active Connections</h6>
                 <div class="table-responsive">
                     <table class="table table-sm">
                         <thead>
                             <tr>
                                 <th>Public Key</th>
                                 <th>Allowed IPs</th>
-                                <th>Last Handshake</th>
+                                <th>Endpoint</th>
+                                <th>Latest Handshake</th>
                                 <th>Transfer</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -271,17 +227,32 @@
                             <tr>
                                 <td><code>{{ peer.public_key }}</code></td>
                                 <td>
-                                    <code class="text-success">{{ peer.allowed_ips or 'N/A' }}</code>
-                                    {% if peer.allowed_ips %}
-                                    <button class="btn btn-xs btn-outline-success ms-1" 
+                                    <code class="text-primary">{{ peer.allowed_ips }}</code>
+                                    <button class="btn btn-xs btn-outline-primary ms-1" 
                                             onclick="copyToSourceIP('{{ peer.allowed_ips.split('/')[0] if '/' in peer.allowed_ips else peer.allowed_ips }}')"
                                             title="Copy to Source IP field">
                                         <i class="bi bi-clipboard"></i>
                                     </button>
+                                </td>
+                                <td>{{ peer.endpoint if peer.endpoint else '-' }}</td>
+                                <td>
+                                    {% if peer.latest_handshake %}
+                                        {{ format_datetime(peer.latest_handshake) }}
+                                    {% else %}
+                                        <span class="text-muted">Never</span>
                                     {% endif %}
                                 </td>
-                                <td><small>{{ peer.last_handshake or 'Never' }}</small></td>
-                                <td><small>{{ peer.transfer or '0 B received, 0 B sent' }}</small></td>
+                                <td>
+                                    <small>
+                                        ↓ {{ format_bytes(peer.transfer_rx or 0) }}<br>
+                                        ↑ {{ format_bytes(peer.transfer_tx or 0) }}
+                                    </small>
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="debugWireGuard()">
+                                        <i class="bi bi-info-circle"></i> Debug
+                                    </button>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>

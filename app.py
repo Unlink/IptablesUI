@@ -53,108 +53,6 @@ ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS = os.environ.get('ADMIN_PASS', 'password')
 RULES_FILE = 'rules.json'
 
-# WireGuard configuration paths
-WG_CONFIG_PATHS = [
-    '/config/wg0.conf',  # LinuxServer WireGuard container path
-    '/etc/wireguard/wg0.conf',  # Standard WireGuard path
-    '/config/wg_confs/wg0.conf',  # Alternative LinuxServer path
-]
-
-def get_wireguard_peers():
-    """Get WireGuard peer information from config files or wg show"""
-    peers = []
-    
-    # First try to find WireGuard config file (for Docker volume sharing)
-    config_file = None
-    for path in WG_CONFIG_PATHS:
-        if os.path.exists(path):
-            config_file = path
-            break
-    
-    if not config_file:
-        # Fallback: Try to get peer info from wg show dump
-        return get_wireguard_peers_from_wg_show()
-
-def get_wireguard_peers_from_wg_show():
-    """Get configured peers info from wg show dump command"""
-    peers = []
-    
-    try:
-        # Use wg show dump for more detailed info
-        result = subprocess.run(['wg', 'show', 'dump'], 
-                              capture_output=True, text=True, timeout=10)
-        
-        if result.returncode == 0:
-            for line in result.stdout.strip().split('\n'):
-                if line and '\t' in line:
-                    parts = line.split('\t')
-                    if len(parts) >= 6:  # wg0, public_key, preshared_key, endpoint, allowed_ips, latest_handshake, transfer
-                        peer = {
-                            'public_key': parts[1][:8] + '...' if parts[1] else 'Unknown',
-                            'allowed_ips': parts[4] if parts[4] else 'Unknown',
-                            'endpoint': parts[3] if parts[3] != '(none)' else None,
-                            'name': f"Peer {len(peers) + 1}",  # Generic name
-                            'server_network': 'Unknown'
-                        }
-                        peers.append(peer)
-    except Exception as e:
-        print(f"Error getting peers from wg show dump: {e}")
-    
-    return peers
-    
-    try:
-        with open(config_file, 'r') as f:
-            content = f.read()
-        
-        # Parse WireGuard config manually (configparser doesn't handle WG format well)
-        current_peer = {}
-        server_info = {}
-        
-        for line in content.split('\n'):
-            line = line.strip()
-            
-            if line.startswith('[Interface]'):
-                current_section = 'interface'
-                continue
-            elif line.startswith('[Peer]'):
-                if current_peer:  # Save previous peer
-                    peers.append(current_peer.copy())
-                current_peer = {}
-                current_section = 'peer'
-                continue
-            
-            if '=' in line:
-                key, value = line.split('=', 1)
-                key = key.strip()
-                value = value.strip()
-                
-                if current_section == 'interface':
-                    if key == 'Address':
-                        server_info['server_network'] = value
-                elif current_section == 'peer':
-                    if key == 'PublicKey':
-                        current_peer['public_key'] = value[:8] + '...'  # Show only first 8 chars
-                    elif key == 'AllowedIPs':
-                        current_peer['allowed_ips'] = value
-                    elif key == 'Endpoint':
-                        current_peer['endpoint'] = value
-                    elif key == '#' or key.startswith('#'):
-                        # Handle comments as peer names
-                        current_peer['name'] = line[1:].strip()
-        
-        # Add last peer
-        if current_peer:
-            peers.append(current_peer)
-        
-        # Add server info to each peer for reference
-        for peer in peers:
-            peer['server_network'] = server_info.get('server_network', 'Unknown')
-            
-    except Exception as e:
-        print(f"Error reading WireGuard config: {e}")
-    
-    return peers
-
 def get_wireguard_status():
     """Get WireGuard interface status and active connections"""
     status_info = {
@@ -275,7 +173,6 @@ def dashboard():
     """Dashboard - show current iptables rules"""
     rules = get_current_rules()
     rules_stats = get_iptables_statistics()
-    wg_peers = get_wireguard_peers()
     wg_status = get_wireguard_status()
     
     # Merge saved rules with current statistics
@@ -310,7 +207,6 @@ def dashboard():
                          rules=rules,
                          enhanced_rules=enhanced_rules,
                          rules_stats=rules_stats,
-                         wg_peers=wg_peers, 
                          wg_status=wg_status)
 
 @app.route('/add-rule', methods=['GET', 'POST'])
@@ -360,7 +256,6 @@ def add_rule():
             flash('Failed to add rule: Unknown error', 'error')
     
     return render_template('add_rule.html', 
-                         wg_peers=get_wireguard_peers(), 
                          wg_status=get_wireguard_status())
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -397,10 +292,9 @@ def settings():
 @login_required
 def api_wireguard_peers():
     """API endpoint to get WireGuard peers information"""
-    peers = get_wireguard_peers()
     status = get_wireguard_status()
     return {
-        'peers': peers,
+        'peers': status.get('active_peers', []),
         'status': status,
         'success': True
     }

@@ -2,6 +2,7 @@
 
 [![Docker Build](https://github.com/Unlink/IptablesUI/actions/workflows/docker-build.yml/badge.svg)](https://github.com/Unlink/IptablesUI/actions/workflows/docker-build.yml)
 [![Security Scan](https://github.com/Unlink/IptablesUI/actions/workflows/security-scan.yml/badge.svg)](https://github.com/Unlink/IptablesUI/actions/workflows/security-scan.yml)
+[![Security Scan](https://github.com/Unlink/IptablesUI/actions/workflows/security-scan.yml/badge.svg)](https://github.com/Unlink/IptablesUI/actions/workflows/security-scan.yml)
 [![CI/CD](https://github.com/Unlink/IptablesUI/actions/workflows/ci.yml/badge.svg)](https://github.com/Unlink/IptablesUI/actions/workflows/ci.yml)
 
 Jednoduchá webová aplikácia pre správu iptables firewall pravidiel s Docker podporou.
@@ -80,8 +81,8 @@ IptablesUI je Flask webová aplikácia, ktorá poskytuje grafické používateľ
 ### Štruktúra projektu
 ```
 IptablesUI/
-├── app.py                 # Hlavná Flask aplikácia
-├── requirements.txt       # Python závislosti
+├── app.py                        # Hlavná Flask aplikácia
+├── requirements.txt              # Python závislosti (aktualizované pre CVE)
 ├── Dockerfile                    # Docker konfigurácia
 ├── docker-compose.yml            # WireGuard + IptablesUI setup
 ├── docker-compose.standalone.yml # Standalone IptablesUI
@@ -90,6 +91,12 @@ IptablesUI/
 ├── README.md                     # Základná dokumentácia
 ├── DEPLOYMENT.md                 # Deployment guide
 ├── WIREGUARD.md                  # WireGuard integrácia guide
+├── SECURITY.md                   # Bezpečnostné informácie
+└── templates/
+    ├── base.html                 # Základný template
+    ├── dashboard.html            # Hlavný dashboard s WG peermi
+    ├── login.html                # Prihlásenie
+    └── add_rule.html             # Pridanie iptables pravidla
 ├── example-rules.json            # Príklad pravidiel
 ├── .github/                      # GitHub Actions workflows
 │   ├── workflows/                # CI/CD workflows
@@ -264,11 +271,15 @@ chmod +x start.sh
 
 ## Bezpečnosť
 
+**Aktualizované závislosti (2024-12-24):** Všetky HIGH severity CVE vulnerabilities boli vyriešené aktualizáciou na Flask 3.0.3 a Werkzeug 3.0.4. Detaily v [SECURITY.md](SECURITY.md).
+
 - **Autentifikácia:** Jednoduchá username/password autentifikácia
 - **Odporúčania:**
-  - Zmeňte predvolené prihlasovacie údaje
+  - Zmeňte predvolené prihlasovacie údaje (`admin/admin`)
   - Používajte silné heslo
   - Obmedzte prístup k portu 8080
+  - Pravidelne aktualizujte závislosti
+- **CVE Status:** Všetky známe HIGH severity vulnerabilities vyriešené
   - Pravidelne zálohujte rules.json
 
 ## JSON formát pravidiel
@@ -312,6 +323,20 @@ chmod +x start.sh
 ### Pravidlá sa neukladajú
 - Skontrolujte oprávnienia k súboru rules.json
 - Overte mount point pre volume
+
+### WireGuard peers sa nezobrazujú
+- Overte, že network_mode: "container:wireguard" je nastavený
+- Skontrolujte, či WireGuard kontajner beží
+- Skontrolujte logy: `docker-compose logs iptablesui`
+
+## Dokumentácia
+
+Pre podrobné informácie o deployment a WireGuard integrácii:
+- [DEPLOYMENT.md](DEPLOYMENT.md) - Kompletný deployment guide
+- [WIREGUARD.md](WIREGUARD.md) - WireGuard integrácia
+- [SECURITY.md](SECURITY.md) - Bezpečnostné informácie
+
+**Projekt je pripravený na produkčné použitie s bezpečnými závislosťami a plnou WireGuard integráciou.**
 
 ## Licencia
 

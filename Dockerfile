@@ -14,6 +14,9 @@ WORKDIR /app
 # Copy requirements first for better Docker layer caching
 COPY requirements.txt .
 
+# Upgrade pip and setuptools to latest secure versions
+RUN pip install --no-cache-dir --upgrade pip setuptools>=78.1.1
+
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 

@@ -199,18 +199,37 @@ def dashboard():
     rules_stats = get_iptables_statistics()
     wg_status = get_wireguard_status()
     
+    # Debug output
+    print(f"DEBUG: Found {len(rules_stats)} iptables statistics")
+    for stat in rules_stats:
+        print(f"  Stat: chain={stat['chain']}, target={stat['target']}, protocol={stat['protocol']}, source={stat['source']}, packets={stat['packets']}, bytes={stat['bytes']}")
+    
     # Merge saved rules with current statistics
     saved_rules = load_rules_from_json()
+    print(f"DEBUG: Found {len(saved_rules)} saved rules")
+    for rule in saved_rules:
+        print(f"  Rule: chain={rule.get('chain')}, action={rule.get('action')}, protocol={rule.get('protocol', '')}, source_ip={rule.get('source_ip', '')}")
+    
     enhanced_rules = []
     
     for saved_rule in saved_rules:
         # Find matching statistics for this rule
         matching_stats = None
         for stat in rules_stats:
+            # Normalize protocol comparison - 'all' in iptables means no specific protocol
+            saved_protocol = saved_rule.get('protocol', '') or ''
+            stat_protocol = stat['protocol'] if stat['protocol'] != 'all' else ''
+            
+            # Normalize source IP comparison
+            saved_source = saved_rule.get('source_ip', '') or ''
+            stat_source = stat['source'] or ''
+            
             if (stat['chain'] == saved_rule.get('chain') and
                 stat['target'] == saved_rule.get('action') and
-                stat['protocol'] == saved_rule.get('protocol', '')):
+                stat_protocol == saved_protocol and
+                (not saved_source or stat_source == saved_source or stat_source == '0.0.0.0/0')):
                 matching_stats = stat
+                print(f"DEBUG: MATCHED rule {saved_rule.get('chain')}/{saved_rule.get('action')} with stats: packets={stat['packets']}, bytes={stat['bytes']}")
                 break
         
         enhanced_rule = saved_rule.copy()
@@ -756,6 +775,45 @@ def initialize_app():
     print("Initializing IptablesUI...")
     apply_all_rules()
     print("IptablesUI initialized successfully")
+
+@app.route('/api/debug/stats')
+@login_required  
+def debug_stats():
+    """Debug endpoint to diagnose statistics matching"""
+    rules_stats = get_iptables_statistics()
+    saved_rules = load_rules_from_json()
+    
+    debug_info = {
+        'rules_stats': rules_stats,
+        'saved_rules': saved_rules,
+        'matching_attempts': []
+    }
+    
+    # Debug matching logic
+    for saved_rule in saved_rules:
+        matching_info = {
+            'saved_rule': saved_rule,
+            'matches': []
+        }
+        
+        for stat in rules_stats:
+            match_result = {
+                'stat': stat,
+                'chain_match': stat['chain'] == saved_rule.get('chain'),
+                'target_match': stat['target'] == saved_rule.get('action'),
+                'protocol_match': stat['protocol'] == saved_rule.get('protocol', ''),
+                'source_match': stat['source'] == saved_rule.get('source_ip', ''),
+                'overall_match': (
+                    stat['chain'] == saved_rule.get('chain') and
+                    stat['target'] == saved_rule.get('action') and
+                    stat['protocol'] == saved_rule.get('protocol', '')
+                )
+            }
+            matching_info['matches'].append(match_result)
+        
+        debug_info['matching_attempts'].append(matching_info)
+    
+    return debug_info
 
 if __name__ == '__main__':
     initialize_app()

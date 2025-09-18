@@ -14,11 +14,18 @@
             <h5 class="mb-1">WireGuard VPN Active</h5>
             <p class="mb-0">
                 Server IP: <code>{{ wg_status.server_ip or 'Unknown' }}</code> | 
+                Interface: <code>{{ wg_status.interface_name or 'wg0' }}</code> |
                 Active Peers: <span class="badge bg-success">{{ wg_status.active_peers|length }}</span>
                 <button class="btn btn-sm btn-outline-success ms-2" onclick="refreshWireGuardInfo()">
                     <i class="bi bi-arrow-clockwise"></i> Refresh
                 </button>
+                <button class="btn btn-sm btn-outline-info ms-1" onclick="showDebugInfo()">
+                    <i class="bi bi-bug"></i> Debug
+                </button>
             </p>
+            {% if wg_status.error %}
+            <small class="text-danger">Error: {{ wg_status.error }}</small>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -274,6 +281,42 @@ function refreshWireGuardInfo() {
             }
         })
         .catch(error => console.error('Error:', error));
+}
+
+function showDebugInfo() {
+    fetch('/api/debug/wireguard')
+        .then(response => response.json())
+        .then(data => {
+            // Create modal with debug information
+            const debugInfo = JSON.stringify(data, null, 2);
+            const modal = document.createElement('div');
+            modal.className = 'modal fade';
+            modal.innerHTML = `
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">WireGuard Debug Information</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <pre class="bg-dark text-light p-3" style="font-size: 0.8em; max-height: 400px; overflow-y: auto;">${debugInfo}</pre>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        </div>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
+            const bsModal = new bootstrap.Modal(modal);
+            bsModal.show();
+            modal.addEventListener('hidden.bs.modal', () => {
+                document.body.removeChild(modal);
+            });
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error getting debug info');
+        });
 }
 </script>
 {% endblock %}

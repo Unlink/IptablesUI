@@ -99,12 +99,41 @@ def get_wireguard_status():
     status_info = {
         'interface_up': False,
         'active_peers': [],
-        'server_ip': None
+        'server_ip': None,
+        'interface_name': None
     }
     
     try:
-        # Check if wg0 interface exists
-        result = subprocess.run(['ip', 'addr', 'show', 'wg0'], 
+        # First, detect WireGuard interface
+        wg_interfaces = []
+        
+        # Try to find any WireGuard interface
+        result = subprocess.run(['wg'], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0 and result.stdout.strip():
+            # Parse interface names from wg output
+            for line in result.stdout.split('\n'):
+                if line.startswith('interface:'):
+                    interface_name = line.split('interface: ')[1].strip()
+                    wg_interfaces.append(interface_name)
+        
+        # If no interfaces found with wg, try common names
+        if not wg_interfaces:
+            for iface in ['wg0', 'wg1', 'wg-server', 'wireguard']:
+                result = subprocess.run(['ip', 'addr', 'show', iface], 
+                                      capture_output=True, text=True)
+                if result.returncode == 0:
+                    wg_interfaces.append(iface)
+                    break
+        
+        if not wg_interfaces:
+            return status_info
+            
+        # Use first found interface
+        wg_interface = wg_interfaces[0]
+        status_info['interface_name'] = wg_interface
+        
+        # Check if interface exists and get IP
+        result = subprocess.run(['ip', 'addr', 'show', wg_interface], 
                               capture_output=True, text=True)
         if result.returncode == 0:
             status_info['interface_up'] = True
@@ -116,27 +145,34 @@ def get_wireguard_status():
                         status_info['server_ip'] = ip_match.group(1)
         
         # Get active peer connections
-        result = subprocess.run(['wg', 'show', 'wg0'], 
+        result = subprocess.run(['wg', 'show', wg_interface], 
                               capture_output=True, text=True)
         if result.returncode == 0:
             current_peer = None
             for line in result.stdout.split('\n'):
+                line = line.strip()
                 if line.startswith('peer:'):
                     if current_peer:
                         status_info['active_peers'].append(current_peer)
-                    current_peer = {'public_key': line.split(': ')[1][:8] + '...'}
-                elif current_peer and 'allowed ips:' in line:
-                    current_peer['allowed_ips'] = line.split(': ')[1]
-                elif current_peer and 'latest handshake:' in line:
-                    current_peer['last_handshake'] = line.split(': ')[1]
-                elif current_peer and 'transfer:' in line:
-                    current_peer['transfer'] = line.split(': ')[1]
+                    # Extract public key after "peer: "
+                    public_key = line.split('peer: ')[1] if 'peer: ' in line else line.split()[1]
+                    current_peer = {'public_key': public_key[:8] + '...', 'full_key': public_key}
+                elif current_peer and line.startswith('allowed ips:'):
+                    current_peer['allowed_ips'] = line.split('allowed ips: ')[1]
+                elif current_peer and line.startswith('latest handshake:'):
+                    handshake = line.split('latest handshake: ')[1]
+                    current_peer['last_handshake'] = handshake
+                    # Consider peer active if handshake is recent (less than 5 minutes ago)
+                    current_peer['is_active'] = 'minute' in handshake or 'second' in handshake
+                elif current_peer and line.startswith('transfer:'):
+                    current_peer['transfer'] = line.split('transfer: ')[1]
             
             if current_peer:
                 status_info['active_peers'].append(current_peer)
                 
     except Exception as e:
         print(f"Error getting WireGuard status: {e}")
+        status_info['error'] = str(e)
     
     return status_info
 
@@ -270,6 +306,54 @@ def api_wireguard_status():
         'status': status,
         'success': True
     }
+
+@app.route('/api/debug/wireguard')
+@login_required
+def debug_wireguard():
+    """Debug endpoint to see raw WireGuard output"""
+    import subprocess
+    debug_info = {}
+    
+    try:
+        # Check interface
+        result = subprocess.run(['ip', 'addr', 'show', 'wg0'], 
+                              capture_output=True, text=True, timeout=10)
+        debug_info['ip_addr_show'] = {
+            'returncode': result.returncode,
+            'stdout': result.stdout,
+            'stderr': result.stderr
+        }
+    except Exception as e:
+        debug_info['ip_addr_show'] = {'error': str(e)}
+    
+    try:
+        # Check wg show
+        result = subprocess.run(['wg', 'show', 'wg0'], 
+                              capture_output=True, text=True, timeout=10)
+        debug_info['wg_show'] = {
+            'returncode': result.returncode,
+            'stdout': result.stdout,
+            'stderr': result.stderr
+        }
+    except Exception as e:
+        debug_info['wg_show'] = {'error': str(e)}
+    
+    try:
+        # Also try wg without interface
+        result = subprocess.run(['wg'], 
+                              capture_output=True, text=True, timeout=10)
+        debug_info['wg_all'] = {
+            'returncode': result.returncode,
+            'stdout': result.stdout,
+            'stderr': result.stderr
+        }
+    except Exception as e:
+        debug_info['wg_all'] = {'error': str(e)}
+    
+    # Get parsed status
+    debug_info['parsed_status'] = get_wireguard_status()
+    
+    return debug_info
 
 def get_current_rules():
     """Get current iptables rules"""

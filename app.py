@@ -379,30 +379,7 @@ def debug_wireguard():
     import subprocess
     debug_info = {}
 
-@app.route('/api/debug/filters')
-@login_required  
-def debug_filters():
-    """Debug endpoint to test template filters"""
-    filters_info = {
-        'available_filters': list(app.jinja_env.filters.keys()),
-        'format_bytes_exists': 'format_bytes' in app.jinja_env.filters,
-        'format_datetime_exists': 'format_datetime' in app.jinja_env.filters,
-    }
-    
-    # Test the filters
-    try:
-        filter_func = app.jinja_env.filters.get('format_bytes')
-        if filter_func:
-            filters_info['format_bytes_test'] = {
-                '1024': filter_func(1024),
-                '0': filter_func(0),
-                'None': filter_func(None)
-            }
-    except Exception as e:
-        filters_info['format_bytes_error'] = str(e)
-        
-    return filters_info
-    
+
     try:
         # Check interface
         result = subprocess.run(['ip', 'addr', 'show', 'wg0'], 

@@ -17,7 +17,6 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 # Template helper functions
-@app.template_filter('format_bytes')
 def format_bytes(bytes_value):
     """Format bytes to human readable format"""
     # Handle None, empty string, or non-numeric values
@@ -35,7 +34,6 @@ def format_bytes(bytes_value):
         bytes_value /= 1024
     return f"{bytes_value:.1f} TB"
 
-@app.template_filter('format_datetime')
 def format_datetime(datetime_str):
     """Format datetime string to readable format"""
     if not datetime_str:
@@ -46,6 +44,10 @@ def format_datetime(datetime_str):
         return dt.strftime('%Y-%m-%d %H:%M')
     except:
         return datetime_str
+
+# Register template filters manually
+app.jinja_env.filters['format_bytes'] = format_bytes
+app.jinja_env.filters['format_datetime'] = format_datetime
 
 # Configuration
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')

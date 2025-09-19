@@ -165,8 +165,8 @@
                         </td>
                         <td>
                             <div class="btn-group" role="group">
-                                <!-- Move up button -->
-                                {% if not loop.first %}
+                                <!-- Move up button - disable if line_number is 1 -->
+                                {% if rule.line_number and rule.line_number > 1 %}
                                 <button class="btn btn-sm btn-outline-primary" 
                                         onclick="moveRuleUp({{ rule.line_number }}, '{{ rule.chain }}')" 
                                         title="Move rule up (higher priority)">
@@ -178,15 +178,15 @@
                                 </button>
                                 {% endif %}
                                 
-                                <!-- Move down button -->
-                                {% if not loop.last %}
+                                <!-- Move down button - let backend handle if it's the last one -->
+                                {% if rule.line_number %}
                                 <button class="btn btn-sm btn-outline-primary" 
                                         onclick="moveRuleDown({{ rule.line_number }}, '{{ rule.chain }}')" 
                                         title="Move rule down (lower priority)">
                                     <i class="bi bi-arrow-down"></i>
                                 </button>
                                 {% else %}
-                                <button class="btn btn-sm btn-outline-secondary" disabled title="Already at bottom">
+                                <button class="btn btn-sm btn-outline-secondary" disabled title="No line number">
                                     <i class="bi bi-arrow-down"></i>
                                 </button>
                                 {% endif %}

@@ -406,21 +406,17 @@ def dashboard():
         
         enhanced_rules.append(enhanced_rule)
     
-    # Sort rules by type (chain) and then by action
+    # Sort rules by chain and then by line number (iptables order)
     def sort_rule_key(rule):
         # Priority order: INPUT first, then FORWARD, then OUTPUT
         chain_priority = {'INPUT': 1, 'FORWARD': 2, 'OUTPUT': 3}
-        # Action priority: ACCEPT first, then DROP, then REJECT
-        action_priority = {'ACCEPT': 1, 'DROP': 2, 'REJECT': 3}
         
         chain = rule.get('chain', 'ZZZ')  # Unknown chains go to end
-        action = rule.get('action', 'ZZZ')  # Unknown actions go to end
+        line_number = rule.get('line_number', 999)  # Unknown line numbers go to end
         
         return (
-            chain_priority.get(chain, 99),  # Chain priority
-            action_priority.get(action, 99),  # Action priority  
-            rule.get('protocol', ''),  # Then by protocol
-            rule.get('source_ip', ''),  # Then by source IP
+            chain_priority.get(chain, 99),  # Chain priority first
+            line_number  # Then by line number (iptables order)
         )
     
     enhanced_rules.sort(key=sort_rule_key)

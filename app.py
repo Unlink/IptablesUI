@@ -101,16 +101,26 @@ def get_all_iptables_rules():
                     if line.strip():
                         parts = line.split()
                         if len(parts) >= 3:
+                            # Generate a basic hash for the rule
+                            rule_data = {
+                                'chain': chain,
+                                'action': parts[1] if len(parts) > 1 else '',
+                                'protocol': parts[2] if len(parts) > 2 and parts[2] != 'all' else '',
+                                'source_ip': parts[4] if len(parts) > 4 and parts[4] != '0.0.0.0/0' else '',
+                                'destination_ip': parts[5] if len(parts) > 5 and parts[5] != '0.0.0.0/0' else ''
+                            }
+                            
                             rule = {
                                 'chain': chain,
-                                'line_number': int(parts[0]),
-                                'action': parts[1],
-                                'protocol': parts[2] if len(parts) > 2 else '',
-                                'source_ip': parts[4] if len(parts) > 4 else '',
-                                'destination_ip': parts[5] if len(parts) > 5 else '',
+                                'line_number': int(parts[0]) if parts[0].isdigit() else 0,
+                                'action': parts[1] if len(parts) > 1 else '',
+                                'protocol': parts[2] if len(parts) > 2 and parts[2] != 'all' else '',
+                                'source_ip': parts[4] if len(parts) > 4 and parts[4] != '0.0.0.0/0' else '',
+                                'destination_ip': parts[5] if len(parts) > 5 and parts[5] != '0.0.0.0/0' else '',
                                 'options': ' '.join(parts[6:]) if len(parts) > 6 else '',
                                 'raw_rule': line.strip(),
-                                'managed_by_app': False  # Will be updated if found in config
+                                'managed_by_app': False,  # Will be updated if found in config
+                                'rule_hash': hash(f"{rule_data['chain']}-{rule_data['action']}-{rule_data['protocol']}-{rule_data['source_ip']}-{rule_data['destination_ip']}")
                             }
                             all_rules.append(rule)
     except Exception as e:
@@ -997,12 +1007,19 @@ def debug_parse_test():
 def save_all_rules():
     """Save all current system rules to config file"""
     try:
-        all_rules = get_all_iptables_rules()
+        # Use sync_rules_with_system to get rules with proper hash generation
+        all_rules = sync_rules_with_system()
         config = load_rules_config()
         
         # Convert system rules to our format
         converted_rules = []
         for rule in all_rules:
+            # Generate hash if it doesn't exist
+            if 'rule_hash' not in rule:
+                rule_hash = hash(f"{rule['chain']}-{rule['action']}-{rule.get('protocol', '')}-{rule.get('source_ip', '')}-{rule.get('destination_ip', '')}")
+            else:
+                rule_hash = rule['rule_hash']
+                
             converted_rule = {
                 'chain': rule['chain'],
                 'action': rule['action'],
@@ -1010,9 +1027,11 @@ def save_all_rules():
                 'source_ip': rule.get('source_ip', ''),
                 'destination_ip': rule.get('destination_ip', ''),
                 'port': '',  # Extract from options if needed
-                'comment': f"System rule (line {rule['line_number']})",
-                'rule_hash': rule['rule_hash'],
-                'managed_by_app': False
+                'comment': f"System rule (line {rule.get('line_number', 'unknown')})",
+                'rule_hash': rule_hash,
+                'managed_by_app': rule.get('managed_by_app', False),
+                'line_number': rule.get('line_number'),
+                'created_at': datetime.now().isoformat()
             }
             converted_rules.append(converted_rule)
         

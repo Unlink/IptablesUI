@@ -215,51 +215,6 @@
     </div>
 </div>
 
-{% if rules %}
-<div class="card mt-3">
-    <div class="card-header">
-        <h6 class="mb-0">Raw iptables Rules ({{ rules|length }})</h6>
-    </div>
-    <div class="card-body">
-        <div class="table-responsive">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Raw Rule</th>
-                        <th>Type</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for rule in rules %}
-                    <tr>
-                        <td>{{ loop.index }}</td>
-                        <td><code class="small">{{ rule }}</code></td>
-                        <td>
-                            {% if 'INPUT' in rule %}
-                                <span class="badge bg-info">INPUT</span>
-                            {% elif 'FORWARD' in rule %}
-                                <span class="badge bg-warning">FORWARD</span>
-                            {% elif 'OUTPUT' in rule %}
-                                <span class="badge bg-secondary">OUTPUT</span>
-                            {% endif %}
-                            
-                            {% if 'ACCEPT' in rule %}
-                                <span class="badge bg-success">ACCEPT</span>
-                            {% elif 'DROP' in rule %}
-                                <span class="badge bg-danger">DROP</span>
-                            {% elif 'REJECT' in rule %}
-                                <span class="badge bg-warning">REJECT</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-{% endif %}
 {% else %}
 <div class="alert alert-info text-center">
     <h4><i class="bi bi-info-circle"></i> No Rules Found</h4>

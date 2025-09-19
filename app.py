@@ -11,7 +11,12 @@ import configparser
 import re
 from datetime import datetime
 from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+import subprocess
+import re
+import os
+import json
+from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -56,6 +61,115 @@ print(f"DEBUG: format_bytes filter: {app.jinja_env.filters.get('format_bytes')}"
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS = os.environ.get('ADMIN_PASS', 'password')
 RULES_FILE = 'rules.json'
+
+def load_rules_config():
+    """Load rules configuration from JSON file"""
+    if os.path.exists(RULES_FILE):
+        try:
+            with open(RULES_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading rules config: {e}")
+            return {"rules": [], "last_updated": None, "auto_apply": True, "backup_original": True}
+    return {"rules": [], "last_updated": None, "auto_apply": True, "backup_original": True}
+
+def save_rules_config(config):
+    """Save rules configuration to JSON file"""
+    try:
+        config['last_updated'] = datetime.now().isoformat()
+        with open(RULES_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error saving rules config: {e}")
+        return False
+
+def get_all_iptables_rules():
+    """Get all current iptables rules from the system"""
+    all_rules = []
+    
+    try:
+        # Get rules with line numbers for easier management
+        for chain in ['INPUT', 'FORWARD', 'OUTPUT']:
+            result = subprocess.run(['iptables', '-L', chain, '-n', '--line-numbers'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                for i, line in enumerate(lines):
+                    if i < 2:  # Skip header lines
+                        continue
+                    if line.strip():
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            rule = {
+                                'chain': chain,
+                                'line_number': int(parts[0]),
+                                'action': parts[1],
+                                'protocol': parts[2] if len(parts) > 2 else '',
+                                'source_ip': parts[4] if len(parts) > 4 else '',
+                                'destination_ip': parts[5] if len(parts) > 5 else '',
+                                'options': ' '.join(parts[6:]) if len(parts) > 6 else '',
+                                'raw_rule': line.strip(),
+                                'managed_by_app': False  # Will be updated if found in config
+                            }
+                            all_rules.append(rule)
+    except Exception as e:
+        print(f"Error getting iptables rules: {e}")
+    
+    return all_rules
+
+def sync_rules_with_system():
+    """Sync stored rules with current system state"""
+    config = load_rules_config()
+    system_rules = get_all_iptables_rules()
+    
+    # Mark rules that are managed by the app
+    app_rule_hashes = set()
+    for rule in config.get('rules', []):
+        if 'rule_hash' in rule:
+            app_rule_hashes.add(rule['rule_hash'])
+    
+    # Update system rules to show which are managed by app
+    for rule in system_rules:
+        rule_hash = hash(f"{rule['chain']}-{rule['action']}-{rule['protocol']}-{rule['source_ip']}-{rule['destination_ip']}")
+        rule['rule_hash'] = rule_hash
+        if rule_hash in app_rule_hashes:
+            rule['managed_by_app'] = True
+    
+    return system_rules
+
+def apply_saved_rules():
+    """Apply all saved rules to the system"""
+    config = load_rules_config()
+    applied_count = 0
+    errors = []
+    
+    for rule in config.get('rules', []):
+        try:
+            # Build iptables command from rule
+            cmd = ['iptables', '-A', rule['chain']]
+            
+            if rule.get('protocol'):
+                cmd.extend(['-p', rule['protocol']])
+            if rule.get('source_ip') and rule['source_ip'] != '0.0.0.0/0':
+                cmd.extend(['-s', rule['source_ip']])
+            if rule.get('destination_ip') and rule['destination_ip'] != '0.0.0.0/0':
+                cmd.extend(['-d', rule['destination_ip']])
+            if rule.get('port'):
+                cmd.extend(['--dport', str(rule['port'])])
+            
+            cmd.extend(['-j', rule['action']])
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                applied_count += 1
+            else:
+                errors.append(f"Failed to apply rule: {' '.join(cmd)} - {result.stderr}")
+                
+        except Exception as e:
+            errors.append(f"Error applying rule {rule}: {e}")
+    
+    return applied_count, errors
 
 def get_wireguard_status():
     """Get WireGuard interface status and active connections"""
@@ -194,45 +308,39 @@ def logout():
 @app.route('/')
 @login_required
 def dashboard():
-    """Dashboard - show current iptables rules"""
-    rules = get_current_rules()
+    """Dashboard - show all iptables rules (both app-managed and existing)"""
+    # Get all current rules from system
+    all_rules = sync_rules_with_system()
     rules_stats = get_iptables_statistics()
     wg_status = get_wireguard_status()
     
     # Debug output
     print(f"DEBUG: Found {len(rules_stats)} iptables statistics")
-    for stat in rules_stats:
-        print(f"  Stat: chain={stat['chain']}, target={stat['target']}, protocol={stat['protocol']}, source={stat['source']}, packets={stat['packets']}, bytes={stat['bytes']}")
-    
-    # Merge saved rules with current statistics
-    saved_rules = load_rules_from_json()
-    print(f"DEBUG: Found {len(saved_rules)} saved rules")
-    for rule in saved_rules:
-        print(f"  Rule: chain={rule.get('chain')}, action={rule.get('action')}, protocol={rule.get('protocol', '')}, source_ip={rule.get('source_ip', '')}")
+    print(f"DEBUG: Found {len(all_rules)} total rules in system")
     
     enhanced_rules = []
     
-    for saved_rule in saved_rules:
+    for rule in all_rules:
         # Find matching statistics for this rule
         matching_stats = None
         for stat in rules_stats:
-            # Normalize protocol comparison - 'all' in iptables means no specific protocol
-            saved_protocol = saved_rule.get('protocol', '') or ''
+            # Normalize protocol comparison
+            rule_protocol = rule.get('protocol', '') or ''
             stat_protocol = stat['protocol'] if stat['protocol'] != 'all' else ''
             
             # Normalize source IP comparison
-            saved_source = saved_rule.get('source_ip', '') or ''
+            rule_source = rule.get('source_ip', '') or ''
             stat_source = stat['source'] or ''
             
-            if (stat['chain'] == saved_rule.get('chain') and
-                stat['target'] == saved_rule.get('action') and
-                stat_protocol == saved_protocol and
-                (not saved_source or stat_source == saved_source or stat_source == '0.0.0.0/0')):
+            if (stat['chain'] == rule.get('chain') and
+                stat['target'] == rule.get('action') and
+                stat_protocol == rule_protocol and
+                (not rule_source or stat_source == rule_source or stat_source == '0.0.0.0/0')):
                 matching_stats = stat
-                print(f"DEBUG: MATCHED rule {saved_rule.get('chain')}/{saved_rule.get('action')} with stats: packets={stat['packets']}, bytes={stat['bytes']}")
+                print(f"DEBUG: MATCHED rule {rule.get('chain')}/{rule.get('action')} with stats: packets={stat['packets']}, bytes={stat['bytes']}")
                 break
         
-        enhanced_rule = saved_rule.copy()
+        enhanced_rule = rule.copy()
         if matching_stats:
             enhanced_rule.update({
                 'packets': matching_stats['packets'],
@@ -266,7 +374,7 @@ def dashboard():
     enhanced_rules.sort(key=sort_rule_key)
     
     return render_template('dashboard.html', 
-                         rules=rules,
+                         rules=get_current_rules(),  # Keep for backward compatibility
                          enhanced_rules=enhanced_rules,
                          rules_stats=rules_stats,
                          wg_status=wg_status)
@@ -884,6 +992,232 @@ def debug_parse_test():
         'current_iptables_output': get_iptables_statistics()
     }
 
+@app.route('/api/rules/save-all', methods=['POST'])
+@login_required
+def save_all_rules():
+    """Save all current system rules to config file"""
+    try:
+        all_rules = get_all_iptables_rules()
+        config = load_rules_config()
+        
+        # Convert system rules to our format
+        converted_rules = []
+        for rule in all_rules:
+            converted_rule = {
+                'chain': rule['chain'],
+                'action': rule['action'],
+                'protocol': rule.get('protocol', ''),
+                'source_ip': rule.get('source_ip', ''),
+                'destination_ip': rule.get('destination_ip', ''),
+                'port': '',  # Extract from options if needed
+                'comment': f"System rule (line {rule['line_number']})",
+                'rule_hash': rule['rule_hash'],
+                'managed_by_app': False
+            }
+            converted_rules.append(converted_rule)
+        
+        config['rules'] = converted_rules
+        if save_rules_config(config):
+            return jsonify({
+                'success': True, 
+                'message': f'Saved {len(converted_rules)} rules to configuration',
+                'rules_count': len(converted_rules)
+            })
+        else:
+            return jsonify({'success': False, 'message': 'Failed to save configuration'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error saving rules: {str(e)}'})
+
+@app.route('/api/rules/delete/<int:line_number>/<chain>', methods=['POST'])
+@login_required
+def delete_system_rule(line_number, chain):
+    """Delete a specific system rule by line number and chain"""
+    try:
+        # Delete from iptables
+        cmd = ['iptables', '-D', chain, str(line_number)]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            # Also remove from saved config if it exists
+            config = load_rules_config()
+            original_count = len(config.get('rules', []))
+            config['rules'] = [r for r in config.get('rules', []) 
+                             if not (r.get('chain') == chain and r.get('line_number') == line_number)]
+            save_rules_config(config)
+            
+            return jsonify({
+                'success': True, 
+                'message': f'Rule deleted from {chain} chain line {line_number}',
+                'rules_removed_from_config': original_count - len(config.get('rules', []))
+            })
+        else:
+            return jsonify({
+                'success': False, 
+                'message': f'Failed to delete rule: {result.stderr}'
+            })
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error deleting rule: {str(e)}'})
+
+@app.route('/api/rules/apply-saved', methods=['POST'])
+@login_required
+def apply_saved_rules_api():
+    """Apply all saved rules from configuration"""
+    try:
+        applied_count, errors = apply_saved_rules()
+        
+        if errors:
+            return jsonify({
+                'success': False,
+                'message': f'Applied {applied_count} rules with {len(errors)} errors',
+                'applied_count': applied_count,
+                'errors': errors
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'message': f'Successfully applied {applied_count} saved rules',
+                'applied_count': applied_count
+            })
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error applying saved rules: {str(e)}'})
+
+@app.route('/api/rules/move-up/<int:line_number>/<chain>', methods=['POST'])
+@login_required
+def move_rule_up(line_number, chain):
+    """Move a rule up (higher priority) in the iptables chain"""
+    if line_number <= 1:
+        return jsonify({'success': False, 'message': 'Rule is already at the top'})
+    
+    try:
+        # Get current rules to find the rule to move
+        all_rules = get_all_iptables_rules()
+        target_rule = None
+        
+        for rule in all_rules:
+            if rule['chain'] == chain and rule['line_number'] == line_number:
+                target_rule = rule
+                break
+        
+        if not target_rule:
+            return jsonify({'success': False, 'message': 'Rule not found'})
+        
+        # Delete the rule from its current position
+        delete_cmd = ['iptables', '-D', chain, str(line_number)]
+        delete_result = subprocess.run(delete_cmd, capture_output=True, text=True, timeout=10)
+        
+        if delete_result.returncode != 0:
+            return jsonify({'success': False, 'message': f'Failed to remove rule: {delete_result.stderr}'})
+        
+        # Insert the rule at the new position (line_number - 1)
+        new_position = line_number - 1
+        insert_cmd = ['iptables', '-I', chain, str(new_position)]
+        
+        # Reconstruct rule parameters
+        if target_rule.get('protocol'):
+            insert_cmd.extend(['-p', target_rule['protocol']])
+        if target_rule.get('source_ip') and target_rule['source_ip'] != '0.0.0.0/0':
+            insert_cmd.extend(['-s', target_rule['source_ip']])
+        if target_rule.get('destination_ip') and target_rule['destination_ip'] != '0.0.0.0/0':
+            insert_cmd.extend(['-d', target_rule['destination_ip']])
+        
+        # Add additional options from raw rule if available
+        if target_rule.get('options'):
+            # Parse options carefully - this is simplified
+            options = target_rule['options'].split()
+            insert_cmd.extend(options)
+        
+        insert_cmd.extend(['-j', target_rule['action']])
+        
+        insert_result = subprocess.run(insert_cmd, capture_output=True, text=True, timeout=10)
+        
+        if insert_result.returncode == 0:
+            return jsonify({
+                'success': True, 
+                'message': f'Rule moved up from line {line_number} to {new_position}',
+                'new_position': new_position
+            })
+        else:
+            return jsonify({'success': False, 'message': f'Failed to insert rule: {insert_result.stderr}'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error moving rule up: {str(e)}'})
+
+@app.route('/api/rules/move-down/<int:line_number>/<chain>', methods=['POST'])
+@login_required
+def move_rule_down(line_number, chain):
+    """Move a rule down (lower priority) in the iptables chain"""
+    try:
+        # Get current rules to check if move is possible
+        all_rules = get_all_iptables_rules()
+        chain_rules = [r for r in all_rules if r['chain'] == chain]
+        max_line = max([r['line_number'] for r in chain_rules]) if chain_rules else 0
+        
+        if line_number >= max_line:
+            return jsonify({'success': False, 'message': 'Rule is already at the bottom'})
+        
+        target_rule = None
+        for rule in all_rules:
+            if rule['chain'] == chain and rule['line_number'] == line_number:
+                target_rule = rule
+                break
+        
+        if not target_rule:
+            return jsonify({'success': False, 'message': 'Rule not found'})
+        
+        # Delete the rule from its current position
+        delete_cmd = ['iptables', '-D', chain, str(line_number)]
+        delete_result = subprocess.run(delete_cmd, capture_output=True, text=True, timeout=10)
+        
+        if delete_result.returncode != 0:
+            return jsonify({'success': False, 'message': f'Failed to remove rule: {delete_result.stderr}'})
+        
+        # Insert the rule at the new position (line_number + 1)
+        # Note: After deletion, the line numbers shift, so we insert at line_number + 1
+        new_position = line_number + 1
+        insert_cmd = ['iptables', '-I', chain, str(new_position)]
+        
+        # Reconstruct rule parameters
+        if target_rule.get('protocol'):
+            insert_cmd.extend(['-p', target_rule['protocol']])
+        if target_rule.get('source_ip') and target_rule['source_ip'] != '0.0.0.0/0':
+            insert_cmd.extend(['-s', target_rule['source_ip']])
+        if target_rule.get('destination_ip') and target_rule['destination_ip'] != '0.0.0.0/0':
+            insert_cmd.extend(['-d', target_rule['destination_ip']])
+        
+        # Add additional options from raw rule if available
+        if target_rule.get('options'):
+            options = target_rule['options'].split()
+            insert_cmd.extend(options)
+        
+        insert_cmd.extend(['-j', target_rule['action']])
+        
+        insert_result = subprocess.run(insert_cmd, capture_output=True, text=True, timeout=10)
+        
+        if insert_result.returncode == 0:
+            return jsonify({
+                'success': True, 
+                'message': f'Rule moved down from line {line_number} to {new_position}',
+                'new_position': new_position
+            })
+        else:
+            return jsonify({'success': False, 'message': f'Failed to insert rule: {insert_result.stderr}'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error moving rule down: {str(e)}'})
+
 if __name__ == '__main__':
     initialize_app()
+    
+    # Apply saved rules if auto_apply is enabled
+    config = load_rules_config()
+    if config.get('auto_apply', True):
+        print("Applying saved rules...")
+        applied_count, errors = apply_saved_rules()
+        print(f"Applied {applied_count} saved rules")
+        if errors:
+            print(f"Errors: {errors}")
+    
     app.run(host='0.0.0.0', port=8080, debug=False)

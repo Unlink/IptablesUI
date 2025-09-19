@@ -49,6 +49,12 @@
         <a href="{{ url_for('add_rule') }}" class="btn btn-primary">
             <i class="bi bi-plus-circle"></i> Add Rule
         </a>
+        <button class="btn btn-info" onclick="saveAllRules()">
+            <i class="bi bi-download"></i> Save All Rules
+        </button>
+        <button class="btn btn-warning" onclick="applyAllRules()">
+            <i class="bi bi-upload"></i> Apply Saved Rules
+        </button>
         <button class="btn btn-secondary" onclick="location.reload()">
             <i class="bi bi-arrow-clockwise"></i> Refresh
         </button>
@@ -96,11 +102,22 @@
                                 {% else %}
                                     <span class="badge bg-secondary">{{ rule.action }}</span>
                                 {% endif %}
+                                
+                                {% if rule.managed_by_app %}
+                                    <span class="badge bg-info" title="Managed by this application">
+                                        <i class="bi bi-gear"></i> App
+                                    </span>
+                                {% else %}
+                                    <span class="badge bg-secondary" title="System rule">
+                                        <i class="bi bi-hdd"></i> System
+                                    </span>
+                                {% endif %}
                             </div>
                             <small class="text-muted">
-                                {% if rule.source_ip %}From: <code>{{ rule.source_ip }}</code>{% endif %}
-                                {% if rule.dest_ip %}To: <code>{{ rule.dest_ip }}</code>{% endif %}
+                                {% if rule.source_ip and rule.source_ip != '0.0.0.0/0' %}From: <code>{{ rule.source_ip }}</code>{% endif %}
+                                {% if rule.destination_ip and rule.destination_ip != '0.0.0.0/0' %}To: <code>{{ rule.destination_ip }}</code>{% endif %}
                                 {% if rule.port %}Port: <code>{{ rule.port }}</code>{% endif %}
+                                {% if rule.line_number %}Line: <code>{{ rule.line_number }}</code>{% endif %}
                             </small>
                         </td>
                         <td>
@@ -147,11 +164,48 @@
                             {% endif %}
                         </td>
                         <td>
-                            <button class="btn btn-sm btn-outline-danger" 
-                                    onclick="deleteRule({{ loop.index0 }})" 
-                                    title="Delete rule">
-                                <i class="bi bi-trash"></i>
-                            </button>
+                            <div class="btn-group" role="group">
+                                <!-- Move up button -->
+                                {% if not loop.first %}
+                                <button class="btn btn-sm btn-outline-primary" 
+                                        onclick="moveRuleUp({{ rule.line_number }}, '{{ rule.chain }}')" 
+                                        title="Move rule up (higher priority)">
+                                    <i class="bi bi-arrow-up"></i>
+                                </button>
+                                {% else %}
+                                <button class="btn btn-sm btn-outline-secondary" disabled title="Already at top">
+                                    <i class="bi bi-arrow-up"></i>
+                                </button>
+                                {% endif %}
+                                
+                                <!-- Move down button -->
+                                {% if not loop.last %}
+                                <button class="btn btn-sm btn-outline-primary" 
+                                        onclick="moveRuleDown({{ rule.line_number }}, '{{ rule.chain }}')" 
+                                        title="Move rule down (lower priority)">
+                                    <i class="bi bi-arrow-down"></i>
+                                </button>
+                                {% else %}
+                                <button class="btn btn-sm btn-outline-secondary" disabled title="Already at bottom">
+                                    <i class="bi bi-arrow-down"></i>
+                                </button>
+                                {% endif %}
+                                
+                                <!-- Delete button -->
+                                {% if rule.managed_by_app %}
+                                    <button class="btn btn-sm btn-outline-danger" 
+                                            onclick="deleteRule({{ loop.index0 }})" 
+                                            title="Delete managed rule">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                {% else %}
+                                    <button class="btn btn-sm btn-outline-warning" 
+                                            onclick="deleteSystemRule({{ rule.line_number }}, '{{ rule.chain }}')" 
+                                            title="Delete system rule">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                {% endif %}
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}
@@ -401,6 +455,81 @@ function refreshStatistics() {
         });
 }
 
+function saveAllRules() {
+    if (confirm('Save all current system rules to configuration? This will allow them to be reapplied on startup.')) {
+        fetch('/api/rules/save-all', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(`Successfully saved ${data.rules_count} rules to configuration!`);
+                location.reload();
+            } else {
+                alert(`Failed to save rules: ${data.message}`);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error saving rules');
+        });
+    }
+}
+
+function applyAllRules() {
+    if (confirm('Apply all saved rules from configuration? This will add them to iptables.')) {
+        fetch('/api/rules/apply-saved', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(`Successfully applied ${data.applied_count} saved rules!`);
+                location.reload();
+            } else {
+                alert(`Failed to apply rules: ${data.message}`);
+                if (data.errors && data.errors.length > 0) {
+                    console.error('Rule application errors:', data.errors);
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error applying saved rules');
+        });
+    }
+}
+
+function deleteSystemRule(lineNumber, chain) {
+    if (confirm(`Are you sure you want to delete rule ${lineNumber} from ${chain} chain? This will remove it from iptables.`)) {
+        fetch(`/api/rules/delete/${lineNumber}/${chain}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Rule deleted successfully!');
+                location.reload();
+            } else {
+                alert(`Failed to delete rule: ${data.message}`);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error deleting rule');
+        });
+    }
+}
+
 function deleteRule(index) {
     if (confirm('Are you sure you want to delete this rule? This will remove it from both iptables and the saved configuration.')) {
         fetch(`/api/rule/delete/${index}`, {
@@ -423,6 +552,50 @@ function deleteRule(index) {
             alert('Error deleting rule');
         });
     }
+}
+
+function moveRuleUp(lineNumber, chain) {
+    fetch(`/api/rules/move-up/${lineNumber}/${chain}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(`Rule moved up successfully! New position: ${data.new_position}`);
+            location.reload();
+        } else {
+            alert(`Failed to move rule up: ${data.message}`);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error moving rule up');
+    });
+}
+
+function moveRuleDown(lineNumber, chain) {
+    fetch(`/api/rules/move-down/${lineNumber}/${chain}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(`Rule moved down successfully! New position: ${data.new_position}`);
+            location.reload();
+        } else {
+            alert(`Failed to move rule down: ${data.message}`);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error moving rule down');
+    });
 }
 </script>
 {% endblock %}

@@ -333,7 +333,11 @@ def dashboard():
     for rule in all_rules:
         # Find matching statistics for this rule
         matching_stats = None
+        print(f"DEBUG: Looking for stats for rule: chain={rule.get('chain')}, action={rule.get('action')}, protocol={rule.get('protocol', '')}, source={rule.get('source_ip', '')}")
+        
         for stat in rules_stats:
+            print(f"DEBUG: Comparing with stat: chain={stat['chain']}, target={stat['target']}, protocol={stat['protocol']}, source={stat['source']}")
+            
             # Normalize protocol comparison
             rule_protocol = rule.get('protocol', '') or ''
             stat_protocol = stat['protocol'] if stat['protocol'] != 'all' else ''
@@ -342,13 +346,22 @@ def dashboard():
             rule_source = rule.get('source_ip', '') or ''
             stat_source = stat['source'] or ''
             
-            if (stat['chain'] == rule.get('chain') and
-                stat['target'] == rule.get('action') and
-                stat_protocol == rule_protocol and
-                (not rule_source or stat_source == rule_source or stat_source == '0.0.0.0/0')):
+            # More flexible matching - try exact match first, then partial
+            chain_match = stat['chain'] == rule.get('chain')
+            action_match = stat['target'] == rule.get('action')
+            protocol_match = stat_protocol == rule_protocol or (not rule_protocol and not stat_protocol)
+            source_match = (not rule_source or stat_source == rule_source or 
+                          stat_source == '0.0.0.0/0' or rule_source == '0.0.0.0/0')
+            
+            print(f"DEBUG: Match results - chain:{chain_match}, action:{action_match}, protocol:{protocol_match}, source:{source_match}")
+            
+            if chain_match and action_match and protocol_match and source_match:
                 matching_stats = stat
-                print(f"DEBUG: MATCHED rule {rule.get('chain')}/{rule.get('action')} with stats: packets={stat['packets']}, bytes={stat['bytes']}")
+                print(f"DEBUG: ✅ MATCHED rule {rule.get('chain')}/{rule.get('action')} with stats: packets={stat['packets']}, bytes={stat['bytes']}")
                 break
+        
+        if not matching_stats:
+            print(f"DEBUG: ❌ NO MATCH found for rule {rule.get('chain')}/{rule.get('action')}")
         
         enhanced_rule = rule.copy()
         if matching_stats:
@@ -631,6 +644,10 @@ def get_iptables_statistics():
         result = subprocess.run(['iptables', '-L', '-n', '-v'], 
                               capture_output=True, text=True, check=True)
         
+        print(f"DEBUG: Raw iptables -nvL output:")
+        print(result.stdout)
+        print("=" * 50)
+        
         rules_stats = []
         current_chain = None
         
@@ -642,6 +659,7 @@ def get_iptables_statistics():
             # Chain header
             if line.startswith('Chain '):
                 current_chain = line.split()[1]
+                print(f"DEBUG: Found chain: {current_chain}")
                 continue
                 
             # Skip column headers
@@ -651,6 +669,9 @@ def get_iptables_statistics():
             # Parse rule line with stats
             if current_chain and line:
                 parts = line.split()
+                print(f"DEBUG: Parsing line: {line}")
+                print(f"DEBUG: Split parts: {parts}")
+                
                 if len(parts) >= 6:
                     try:
                         rule_stat = {
@@ -658,16 +679,22 @@ def get_iptables_statistics():
                             'packets': parse_iptables_size(parts[0]),
                             'bytes': parse_iptables_size(parts[1]),
                             'target': parts[2] if len(parts) > 2 else '',
-                            'protocol': parts[3] if len(parts) > 3 else '',
+                            'prot': parts[3] if len(parts) > 3 else '',  # Keep as 'prot' for compatibility
+                            'protocol': parts[3] if len(parts) > 3 else '',  # Also add as 'protocol'
+                            'opt': parts[4] if len(parts) > 4 else '',
+                            'in': parts[5] if len(parts) > 5 else '',
+                            'out': parts[6] if len(parts) > 6 else '',
                             'source': parts[7] if len(parts) > 7 else '',
                             'destination': parts[8] if len(parts) > 8 else '',
-                            'comment': extract_comment_from_rule_line(' '.join(parts))
+                            'comment': extract_comment_from_rule_line(' '.join(parts)) if len(parts) > 8 else ''
                         }
-                        print(f"DEBUG: Parsed iptables rule: {parts[0]} packets ({rule_stat['packets']}), {parts[1]} bytes ({rule_stat['bytes']})")
+                        print(f"DEBUG: Created rule_stat: {rule_stat}")
                         rules_stats.append(rule_stat)
-                    except (ValueError, IndexError):
+                    except (ValueError, IndexError) as e:
+                        print(f"DEBUG: Error parsing line '{line}': {e}")
                         continue
                         
+        print(f"DEBUG: Total parsed rules_stats: {len(rules_stats)}")        
         return rules_stats
     except subprocess.CalledProcessError as e:
         print(f"Error getting iptables statistics: {e}")
@@ -943,6 +970,28 @@ def initialize_app():
     print("Initializing IptablesUI...")
     apply_all_rules()
     print("IptablesUI initialized successfully")
+
+@app.route('/api/debug/raw-iptables')
+@login_required
+def debug_raw_iptables():
+    """Debug endpoint to see raw iptables output"""
+    try:
+        result = subprocess.run(['iptables', '-L', '-n', '-v'], 
+                              capture_output=True, text=True, check=True)
+        
+        # Also get without verbose for comparison
+        result_simple = subprocess.run(['iptables', '-L', '-n', '--line-numbers'], 
+                                     capture_output=True, text=True, check=True)
+        
+        return {
+            'iptables_verbose': result.stdout,
+            'iptables_simple': result_simple.stdout,
+            'parsed_stats': get_iptables_statistics(),
+            'all_rules': get_all_iptables_rules(),
+            'synced_rules': sync_rules_with_system()
+        }
+    except Exception as e:
+        return {'error': str(e)}
 
 @app.route('/api/debug/stats')
 @login_required  

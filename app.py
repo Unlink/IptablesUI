@@ -67,7 +67,18 @@ def load_rules_config():
     if os.path.exists(RULES_FILE):
         try:
             with open(RULES_FILE, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                
+            # Validate that data is a dictionary
+            if isinstance(data, dict):
+                return data
+            elif isinstance(data, list):
+                print(f"WARNING: rules.json contains list instead of dict, converting...")
+                return {"rules": data, "last_updated": None, "auto_apply": True, "backup_original": True}
+            else:
+                print(f"WARNING: rules.json contains unexpected data type: {type(data)}, resetting...")
+                return {"rules": [], "last_updated": None, "auto_apply": True, "backup_original": True}
+                
         except Exception as e:
             print(f"Error loading rules config: {e}")
             return {"rules": [], "last_updated": None, "auto_apply": True, "backup_original": True}
@@ -130,23 +141,41 @@ def get_all_iptables_rules():
 
 def sync_rules_with_system():
     """Sync stored rules with current system state"""
-    config = load_rules_config()
-    system_rules = get_all_iptables_rules()
-    
-    # Mark rules that are managed by the app
-    app_rule_hashes = set()
-    for rule in config.get('rules', []):
-        if 'rule_hash' in rule:
-            app_rule_hashes.add(rule['rule_hash'])
-    
-    # Update system rules to show which are managed by app
-    for rule in system_rules:
-        rule_hash = hash(f"{rule['chain']}-{rule['action']}-{rule['protocol']}-{rule['source_ip']}-{rule['destination_ip']}")
-        rule['rule_hash'] = rule_hash
-        if rule_hash in app_rule_hashes:
-            rule['managed_by_app'] = True
-    
-    return system_rules
+    try:
+        config = load_rules_config()
+        print(f"DEBUG: loaded config type: {type(config)}, content: {config}")
+        
+        # Double-check config is a dictionary
+        if not isinstance(config, dict):
+            print(f"ERROR: config is not a dict, it's {type(config)}")
+            config = {"rules": [], "last_updated": None, "auto_apply": True, "backup_original": True}
+            
+        system_rules = get_all_iptables_rules()
+        
+        # Mark rules that are managed by the app
+        app_rule_hashes = set()
+        rules_list = config.get('rules', [])
+        
+        if not isinstance(rules_list, list):
+            print(f"WARNING: rules is not a list, it's {type(rules_list)}")
+            rules_list = []
+            
+        for rule in rules_list:
+            if isinstance(rule, dict) and 'rule_hash' in rule:
+                app_rule_hashes.add(rule['rule_hash'])
+        
+        # Update system rules to show which are managed by app
+        for rule in system_rules:
+            rule_hash = hash(f"{rule['chain']}-{rule['action']}-{rule.get('protocol', '')}-{rule.get('source_ip', '')}-{rule.get('destination_ip', '')}")
+            rule['rule_hash'] = rule_hash
+            if rule_hash in app_rule_hashes:
+                rule['managed_by_app'] = True
+        
+        return system_rules
+        
+    except Exception as e:
+        print(f"ERROR in sync_rules_with_system: {e}")
+        return get_all_iptables_rules()  # Fallback to just system rules
 
 def apply_saved_rules():
     """Apply all saved rules to the system"""
@@ -908,22 +937,28 @@ def save_rule_to_json(rule_data):
     save_rules_to_json(rules)
 
 def load_rules_from_json():
-    """Load rules from JSON file"""
+    """Load rules from JSON file (legacy compatibility function)"""
     try:
-        if os.path.exists(RULES_FILE):
-            with open(RULES_FILE, 'r') as f:
-                return json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
+        config = load_rules_config()  # Use the new config loader
+        if isinstance(config, dict):
+            return config.get('rules', [])
+        elif isinstance(config, list):
+            return config  # Old format compatibility
+        else:
+            return []
+    except Exception as e:
         print(f"Error loading rules from JSON: {e}")
-    return []
+        return []
 
 def save_rules_to_json(rules):
-    """Save rules to JSON file"""
+    """Save rules to JSON file (legacy compatibility function)"""
     try:
-        with open(RULES_FILE, 'w') as f:
-            json.dump(rules, f, indent=2)
+        # Load current config to preserve other settings
+        config = load_rules_config()
+        config['rules'] = rules
+        save_rules_config(config)
         print(f"Saved {len(rules)} rules to {RULES_FILE}")
-    except IOError as e:
+    except Exception as e:
         print(f"Error saving rules to JSON: {e}")
 
 def apply_all_rules():

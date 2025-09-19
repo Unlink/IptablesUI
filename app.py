@@ -246,6 +246,25 @@ def dashboard():
         
         enhanced_rules.append(enhanced_rule)
     
+    # Sort rules by type (chain) and then by action
+    def sort_rule_key(rule):
+        # Priority order: INPUT first, then FORWARD, then OUTPUT
+        chain_priority = {'INPUT': 1, 'FORWARD': 2, 'OUTPUT': 3}
+        # Action priority: ACCEPT first, then DROP, then REJECT
+        action_priority = {'ACCEPT': 1, 'DROP': 2, 'REJECT': 3}
+        
+        chain = rule.get('chain', 'ZZZ')  # Unknown chains go to end
+        action = rule.get('action', 'ZZZ')  # Unknown actions go to end
+        
+        return (
+            chain_priority.get(chain, 99),  # Chain priority
+            action_priority.get(action, 99),  # Action priority  
+            rule.get('protocol', ''),  # Then by protocol
+            rule.get('source_ip', ''),  # Then by source IP
+        )
+    
+    enhanced_rules.sort(key=sort_rule_key)
+    
     return render_template('dashboard.html', 
                          rules=rules,
                          enhanced_rules=enhanced_rules,
@@ -458,6 +477,36 @@ def get_current_rules():
         print(f"Error getting iptables rules: {e}")
         return []
 
+def parse_iptables_size(size_str):
+    """Parse iptables size string (e.g., '1414K', '487K', '123M') to bytes"""
+    if not size_str or size_str == '0':
+        return 0
+    
+    # Remove any whitespace
+    size_str = size_str.strip()
+    
+    # If it's just a number, return it
+    if size_str.isdigit():
+        return int(size_str)
+    
+    # Parse with suffix
+    multipliers = {
+        'K': 1024,
+        'M': 1024 * 1024,
+        'G': 1024 * 1024 * 1024,
+        'T': 1024 * 1024 * 1024 * 1024
+    }
+    
+    try:
+        if size_str[-1] in multipliers:
+            number = float(size_str[:-1])
+            return int(number * multipliers[size_str[-1]])
+        else:
+            return int(float(size_str))
+    except (ValueError, IndexError):
+        print(f"Warning: Could not parse size '{size_str}', defaulting to 0")
+        return 0
+
 def get_iptables_statistics():
     """Get iptables rules with packet and byte counters"""
     try:
@@ -488,14 +537,15 @@ def get_iptables_statistics():
                     try:
                         rule_stat = {
                             'chain': current_chain,
-                            'packets': int(parts[0]) if parts[0].isdigit() else 0,
-                            'bytes': int(parts[1]) if parts[1].isdigit() else 0,
+                            'packets': parse_iptables_size(parts[0]),
+                            'bytes': parse_iptables_size(parts[1]),
                             'target': parts[2] if len(parts) > 2 else '',
                             'protocol': parts[3] if len(parts) > 3 else '',
                             'source': parts[7] if len(parts) > 7 else '',
                             'destination': parts[8] if len(parts) > 8 else '',
                             'comment': extract_comment_from_rule_line(' '.join(parts))
                         }
+                        print(f"DEBUG: Parsed iptables rule: {parts[0]} packets ({rule_stat['packets']}), {parts[1]} bytes ({rule_stat['bytes']})")
                         rules_stats.append(rule_stat)
                     except (ValueError, IndexError):
                         continue
@@ -814,6 +864,25 @@ def debug_stats():
         debug_info['matching_attempts'].append(matching_info)
     
     return debug_info
+
+@app.route('/api/debug/parse-test')
+@login_required  
+def debug_parse_test():
+    """Debug endpoint to test size parsing"""
+    test_values = ['1414K', '487K', '660', '0', '1.5M', '2G', '123']
+    results = {}
+    
+    for value in test_values:
+        parsed = parse_iptables_size(value)
+        results[value] = {
+            'parsed': parsed,
+            'formatted': format_bytes(parsed)
+        }
+    
+    return {
+        'test_results': results,
+        'current_iptables_output': get_iptables_statistics()
+    }
 
 if __name__ == '__main__':
     initialize_app()

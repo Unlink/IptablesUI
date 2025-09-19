@@ -113,28 +113,30 @@
                             {% endif %}
                         </td>
                         <td>
-                            <div class="text-center">
-                                <div class="fw-bold text-primary">{{ rule.packets or 0 }}</div>
-                                <small class="text-muted">packets</small>
-                            </div>
-                            <div class="text-center mt-1">
-                                <div class="text-secondary">
-                                    {% if rule.bytes and rule.bytes > 0 %}
-                                        {% set bytes_val = rule.bytes|float %}
-                                        {% if bytes_val >= 1073741824 %}
-                                            {{ "%.1f"|format(bytes_val / 1073741824) }} GB
-                                        {% elif bytes_val >= 1048576 %}
-                                            {{ "%.1f"|format(bytes_val / 1048576) }} MB
-                                        {% elif bytes_val >= 1024 %}
-                                            {{ "%.1f"|format(bytes_val / 1024) }} KB
-                                        {% else %}
-                                            {{ bytes_val|int }} B
-                                        {% endif %}
-                                    {% else %}
-                                        0 B
-                                    {% endif %}
+                            <div class="d-flex justify-content-center align-items-center gap-3">
+                                <div class="text-center">
+                                    <div class="fw-bold text-primary">{{ rule.packets or 0 }}</div>
+                                    <small class="text-muted">packets</small>
                                 </div>
-                                <small class="text-muted">bytes</small>
+                                <div class="text-center">
+                                    <div class="text-secondary">
+                                        {% if rule.bytes and rule.bytes > 0 %}
+                                            {% set bytes_val = rule.bytes|float %}
+                                            {% if bytes_val >= 1073741824 %}
+                                                {{ "%.1f"|format(bytes_val / 1073741824) }} GB
+                                            {% elif bytes_val >= 1048576 %}
+                                                {{ "%.1f"|format(bytes_val / 1048576) }} MB
+                                            {% elif bytes_val >= 1024 %}
+                                                {{ "%.1f"|format(bytes_val / 1024) }} KB
+                                            {% else %}
+                                                {{ bytes_val|int }} B
+                                            {% endif %}
+                                        {% else %}
+                                            0 B
+                                        {% endif %}
+                                    </div>
+                                    <small class="text-muted">bytes</small>
+                                </div>
                             </div>
                         </td>
                         <td>

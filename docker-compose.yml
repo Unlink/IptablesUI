@@ -1,49 +1,60 @@
 version: '3.8'
 
 services:
-  # WireGuard VPN server
-  wireguard:
-    image: linuxserver/wireguard
-    container_name: wireguard
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Europe/Bratislava
-      - SERVERURL=auto  # Or your external IP/domain
-      - SERVERPORT=51820
-      - PEERS=10  # Number of clients
-      - PEERDNS=auto
-    volumes:
-      - ./wireguard:/config
-      - /lib/modules:/lib/modules:ro
-    ports:
-      - "51820:51820/udp"  # WireGuard port
-      - "8080:8080"        # IptablesUI port (shared network)
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-      - net.ipv4.ip_forward=1
-    restart: unless-stopped
-
-  # IptablesUI sharing WireGuard's network stack
+  # IptablesUI with integrated WireGuard VPN Server 
+  # Uses S6 Overlay for robust service management
   iptablesui:
-    image: ghcr.io/unlink/iptablesui:latest
-    # build: .  # Uncomment to build locally instead
-    container_name: iptablesui
-    network_mode: "container:wireguard"  # Share network stack with WireGuard
+    build: .  # Build from local Dockerfile with S6 overlay
+    # image: ghcr.io/unlink/iptablesui:latest  # Or use published image instead
+    container_name: iptablesui-wireguard
+    
+    # Required capabilities for iptables and WireGuard
     cap_add:
-      - NET_ADMIN  # Required for iptables and wg commands
-    depends_on:
-      - wireguard
+      - NET_ADMIN  # Required for iptables and WireGuard commands
+      - SYS_MODULE # Required for WireGuard kernel module
+    
+    # Required sysctls for WireGuard VPN traffic
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1  # WireGuard packet marking
+      - net.ipv4.ip_forward=1               # Enable IP forwarding for VPN
+    
     environment:
+      # Authentication (change in production!)
       - ADMIN_USER=admin
       - ADMIN_PASS=change_me_please
+      
+      # Flask configuration
       - SECRET_KEY=your-secret-key-here
       - FLASK_ENV=production
+      
+      # Timezone
+      - TZ=Europe/Bratislava
+    
     volumes:
-      - ./data:/app/data  # Persist rules.json
+      # Persistent storage for application data and iptables rules
+      - ./data:/app/data
+      
+      # Persistent storage for WireGuard server and peer configurations
+      - ./wireguard:/etc/wireguard
+      
+      # Required for WireGuard kernel module access (read-only)
+      - /lib/modules:/lib/modules:ro
+    
+    ports:
+      - "8080:8080"        # Web interface (HTTP)
+      - "51820:51820/udp"  # WireGuard VPN server port
+    
     restart: unless-stopped
-    # Note: No ports mapping needed - using wireguard's network
-    # Note: cap_add NET_ADMIN enables iptables and wg commands access
+    
+    # Health check to ensure web interface is responding
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s  # Allow time for WireGuard and iptables setup
+
+# Optional: Create named volumes for better persistence management
+# volumes:
+#   iptables_data:
+#   wireguard_config:

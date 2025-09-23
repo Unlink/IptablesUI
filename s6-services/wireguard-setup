@@ -1,0 +1,51 @@
+#!/command/with-contenv bash
+
+# S6 Overlay - WireGuard Setup Service  
+# This service runs once after networking setup to initialize WireGuard if configured
+
+s6-echo "🔍 [wireguard-setup] Checking for WireGuard configuration..."
+
+WG_INTERFACE="wg0"
+WG_CONFIG="/etc/wireguard/${WG_INTERFACE}.conf"
+
+# Check if WireGuard configuration exists
+if [[ -f "$WG_CONFIG" ]]; then
+    s6-echo "📡 [wireguard-setup] Found WireGuard configuration at $WG_CONFIG"
+    
+    # Validate configuration file
+    if wg-quick strip "$WG_INTERFACE" >/dev/null 2>&1; then
+        s6-echo "✅ [wireguard-setup] Configuration is valid"
+        
+        # Attempt to start WireGuard interface
+        s6-echo "🚀 [wireguard-setup] Starting WireGuard interface $WG_INTERFACE..."
+        
+        if wg-quick up "$WG_INTERFACE" 2>/dev/null; then
+            s6-echo "✅ [wireguard-setup] WireGuard interface $WG_INTERFACE started successfully"
+            
+            # Show interface information
+            if wg show "$WG_INTERFACE" >/dev/null 2>&1; then
+                PEER_COUNT=$(wg show "$WG_INTERFACE" | grep -c "^peer:" || echo "0")
+                s6-echo "📊 [wireguard-setup] WireGuard status: $PEER_COUNT peers configured"
+            fi
+        else
+            s6-echo "⚠️ [wireguard-setup] Failed to start WireGuard interface (this is normal if no peers configured yet)"
+        fi
+    else
+        s6-echo "❌ [wireguard-setup] WireGuard configuration is invalid - please check $WG_CONFIG"
+    fi
+else
+    s6-echo "📝 [wireguard-setup] No WireGuard configuration found - server can be configured via web interface"
+    s6-echo "💡 [wireguard-setup] Visit the WireGuard tab in the web UI to set up your VPN server"
+fi
+
+# Load any existing iptables rules from the application
+s6-echo "📋 [wireguard-setup] Checking for saved iptables rules..."
+
+RULES_FILE="/app/data/rules.json"
+if [[ -f "$RULES_FILE" ]]; then
+    s6-echo "📄 [wireguard-setup] Found existing rules.json - will be loaded by Flask app"
+else
+    s6-echo "🔧 [wireguard-setup] No existing rules found - starting with clean iptables"
+fi
+
+s6-echo "✅ [wireguard-setup] WireGuard setup completed"

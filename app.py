@@ -16,6 +16,9 @@ import subprocess
 import re
 import os
 import json
+import ipaddress
+import secrets
+import base64
 from datetime import datetime
 
 app = Flask(__name__)
@@ -61,6 +64,237 @@ print(f"DEBUG: format_bytes filter: {app.jinja_env.filters.get('format_bytes')}"
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS = os.environ.get('ADMIN_PASS', 'password')
 RULES_FILE = 'rules.json'
+WG_CONFIG_DIR = '/etc/wireguard'
+WG_INTERFACE = 'wg0'
+
+def generate_wg_keys():
+    """Generate WireGuard private and public key pair"""
+    try:
+        # Generate private key
+        private_result = subprocess.run(['wg', 'genkey'], capture_output=True, text=True, check=True)
+        private_key = private_result.stdout.strip()
+        
+        # Generate public key from private key
+        public_result = subprocess.run(['wg', 'pubkey'], input=private_key, 
+                                     capture_output=True, text=True, check=True)
+        public_key = public_result.stdout.strip()
+        
+        return private_key, public_key
+    except subprocess.CalledProcessError as e:
+        print(f"Error generating WireGuard keys: {e}")
+        return None, None
+
+def get_wg_server_config():
+    """Get current WireGuard server configuration"""
+    config_file = f"{WG_CONFIG_DIR}/{WG_INTERFACE}.conf"
+    
+    if not os.path.exists(config_file):
+        return None
+        
+    try:
+        with open(config_file, 'r') as f:
+            content = f.read()
+            
+        config = {
+            'interface': WG_INTERFACE,
+            'private_key': '',
+            'listen_port': 51820,
+            'address': '',
+            'peers': []
+        }
+        
+        lines = content.split('\n')
+        current_section = None
+        current_peer = None
+        
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+                
+            if line == '[Interface]':
+                current_section = 'interface'
+                continue
+            elif line == '[Peer]':
+                if current_peer:
+                    config['peers'].append(current_peer)
+                current_peer = {
+                    'public_key': '',
+                    'allowed_ips': '',
+                    'endpoint': '',
+                    'persistent_keepalive': None
+                }
+                current_section = 'peer'
+                continue
+                
+            if '=' in line:
+                key, value = line.split('=', 1)
+                key = key.strip()
+                value = value.strip()
+                
+                if current_section == 'interface':
+                    if key.lower() == 'privatekey':
+                        config['private_key'] = value
+                    elif key.lower() == 'listenport':
+                        config['listen_port'] = int(value)
+                    elif key.lower() == 'address':
+                        config['address'] = value
+                elif current_section == 'peer' and current_peer:
+                    if key.lower() == 'publickey':
+                        current_peer['public_key'] = value
+                    elif key.lower() == 'allowedips':
+                        current_peer['allowed_ips'] = value
+                    elif key.lower() == 'endpoint':
+                        current_peer['endpoint'] = value
+                    elif key.lower() == 'persistentkeepalive':
+                        current_peer['persistent_keepalive'] = int(value)
+        
+        # Add last peer if exists
+        if current_peer:
+            config['peers'].append(current_peer)
+            
+        return config
+        
+    except Exception as e:
+        print(f"Error reading WireGuard config: {e}")
+        return None
+
+def save_wg_server_config(config):
+    """Save WireGuard server configuration"""
+    config_file = f"{WG_CONFIG_DIR}/{WG_INTERFACE}.conf"
+    
+    try:
+        # Create config directory if it doesn't exist
+        os.makedirs(WG_CONFIG_DIR, exist_ok=True)
+        
+        content = "[Interface]\n"
+        content += f"PrivateKey = {config['private_key']}\n"
+        content += f"Address = {config['address']}\n"
+        content += f"ListenPort = {config['listen_port']}\n"
+        content += "SaveConfig = true\n\n"
+        
+        for peer in config.get('peers', []):
+            content += "[Peer]\n"
+            content += f"PublicKey = {peer['public_key']}\n"
+            content += f"AllowedIPs = {peer['allowed_ips']}\n"
+            if peer.get('endpoint'):
+                content += f"Endpoint = {peer['endpoint']}\n"
+            if peer.get('persistent_keepalive'):
+                content += f"PersistentKeepalive = {peer['persistent_keepalive']}\n"
+            content += "\n"
+        
+        with open(config_file, 'w') as f:
+            f.write(content)
+        
+        # Set proper permissions
+        os.chmod(config_file, 0o600)
+        return True
+        
+    except Exception as e:
+        print(f"Error saving WireGuard config: {e}")
+        return False
+
+def start_wg_interface():
+    """Start WireGuard interface"""
+    try:
+        # Stop interface if running
+        subprocess.run(['wg-quick', 'down', WG_INTERFACE], 
+                      capture_output=True, text=True)
+        
+        # Start interface
+        result = subprocess.run(['wg-quick', 'up', WG_INTERFACE], 
+                              capture_output=True, text=True, check=True)
+        return True, "WireGuard interface started successfully"
+    except subprocess.CalledProcessError as e:
+        return False, f"Failed to start WireGuard: {e.stderr}"
+
+def stop_wg_interface():
+    """Stop WireGuard interface"""
+    try:
+        result = subprocess.run(['wg-quick', 'down', WG_INTERFACE], 
+                              capture_output=True, text=True, check=True)
+        return True, "WireGuard interface stopped successfully"
+    except subprocess.CalledProcessError as e:
+        return False, f"Failed to stop WireGuard: {e.stderr}"
+
+def restart_wg_interface():
+    """Restart WireGuard interface"""
+    stop_success, stop_msg = stop_wg_interface()
+    if stop_success or "is not a WireGuard interface" in stop_msg:
+        return start_wg_interface()
+    return False, stop_msg
+
+def get_next_peer_ip(server_address):
+    """Get next available IP address for new peer"""
+    try:
+        network = ipaddress.IPv4Network(server_address, strict=False)
+        
+        # Get existing peer IPs
+        config = get_wg_server_config()
+        used_ips = {str(network.network_address), str(network.broadcast_address)}
+        
+        if config and config.get('address'):
+            # Add server IP
+            server_ip = config['address'].split('/')[0]
+            used_ips.add(server_ip)
+            
+            # Add peer IPs
+            for peer in config.get('peers', []):
+                for allowed_ip in peer.get('allowed_ips', '').split(','):
+                    ip = allowed_ip.strip().split('/')[0]
+                    used_ips.add(ip)
+        
+        # Find first available IP
+        for ip in network.hosts():
+            if str(ip) not in used_ips:
+                return f"{ip}/{network.prefixlen}"
+                
+        return None
+    except Exception as e:
+        print(f"Error getting next peer IP: {e}")
+        return None
+
+def generate_peer_config(peer_name, server_config):
+    """Generate client configuration for peer"""
+    private_key, public_key = generate_wg_keys()
+    if not private_key or not public_key:
+        return None, None
+        
+    # Get next available IP
+    peer_ip = get_next_peer_ip(server_config.get('address', '10.0.0.1/24'))
+    if not peer_ip:
+        return None, None
+    
+    # Generate server public key from private key
+    try:
+        server_public_result = subprocess.run(['wg', 'pubkey'], 
+                                            input=server_config['private_key'], 
+                                            capture_output=True, text=True, check=True)
+        server_public_key = server_public_result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return None, None
+    
+    peer_config = f"""[Interface]
+PrivateKey = {private_key}
+Address = {peer_ip}
+DNS = 8.8.8.8
+
+[Peer]
+PublicKey = {server_public_key}
+AllowedIPs = 0.0.0.0/0
+Endpoint = YOUR_SERVER_IP:{server_config.get('listen_port', 51820)}
+PersistentKeepalive = 25
+"""
+    
+    peer_data = {
+        'name': peer_name,
+        'public_key': public_key,
+        'private_key': private_key,
+        'allowed_ips': peer_ip,
+        'config': peer_config
+    }
+    
+    return peer_data, public_key
 
 def load_rules_config():
     """Load rules configuration from JSON file"""
@@ -344,6 +578,11 @@ def logout():
     flash('Successfully logged out!', 'success')
     return redirect(url_for('login'))
 
+@app.route('/wireguard')
+@login_required
+def wireguard():
+    return render_template('wireguard.html')
+
 @app.route('/')
 @login_required
 def dashboard():
@@ -505,27 +744,6 @@ def settings():
     
     rules_count = len(load_rules_from_json())
     return render_template('settings.html', rules_count=rules_count)
-
-@app.route('/api/wireguard/peers')
-@login_required
-def api_wireguard_peers():
-    """API endpoint to get WireGuard peers information"""
-    status = get_wireguard_status()
-    return {
-        'peers': status.get('active_peers', []),
-        'status': status,
-        'success': True
-    }
-
-@app.route('/api/wireguard/status')
-@login_required
-def api_wireguard_status():
-    """API endpoint to get WireGuard status"""
-    status = get_wireguard_status()
-    return {
-        'status': status,
-        'success': True
-    }
 
 @app.route('/api/iptables/statistics')
 @login_required
@@ -1307,16 +1525,280 @@ def move_rule_down(line_number, chain):
     except Exception as e:
         return jsonify({'success': False, 'message': f'Error moving rule down: {str(e)}'})
 
+@app.route('/api/wireguard/status')
+@login_required
+def wg_status():
+    """Get WireGuard server status"""
+    try:
+        # Check if interface is running
+        result = subprocess.run(['wg', 'show', WG_INTERFACE], 
+                              capture_output=True, text=True)
+        
+        is_running = result.returncode == 0
+        config = get_wg_server_config()
+        
+        status = {
+            'running': is_running,
+            'interface': WG_INTERFACE,
+            'config_exists': config is not None
+        }
+        
+        if config:
+            status['listen_port'] = config.get('listen_port', 51820)
+            status['address'] = config.get('address', '')
+            status['peer_count'] = len(config.get('peers', []))
+        
+        if is_running:
+            # Get peer connection status
+            peers_info = []
+            lines = result.stdout.split('\n')
+            current_peer = None
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith('peer:'):
+                    if current_peer:
+                        peers_info.append(current_peer)
+                    current_peer = {
+                        'public_key': line.split(': ', 1)[1],
+                        'endpoint': None,
+                        'allowed_ips': None,
+                        'latest_handshake': None,
+                        'transfer_rx': 0,
+                        'transfer_tx': 0
+                    }
+                elif line.startswith('endpoint:') and current_peer:
+                    current_peer['endpoint'] = line.split(': ', 1)[1]
+                elif line.startswith('allowed ips:') and current_peer:
+                    current_peer['allowed_ips'] = line.split(': ', 1)[1]
+                elif line.startswith('latest handshake:') and current_peer:
+                    current_peer['latest_handshake'] = line.split(': ', 1)[1]
+                elif line.startswith('transfer:') and current_peer:
+                    transfer_parts = line.split(': ', 1)[1].split(', ')
+                    if len(transfer_parts) >= 2:
+                        current_peer['transfer_rx'] = transfer_parts[0]
+                        current_peer['transfer_tx'] = transfer_parts[1]
+            
+            if current_peer:
+                peers_info.append(current_peer)
+                
+            status['active_peers'] = peers_info
+        
+        return jsonify(status)
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/wireguard/config', methods=['GET', 'POST'])
+@login_required
+def wg_config():
+    """Get or update WireGuard server configuration"""
+    if request.method == 'GET':
+        config = get_wg_server_config()
+        if config:
+            # Don't send private key to client
+            config_safe = config.copy()
+            config_safe['private_key'] = '***hidden***'
+            return jsonify(config_safe)
+        else:
+            return jsonify({'error': 'No configuration found'}), 404
+    
+    elif request.method == 'POST':
+        data = request.get_json()
+        
+        # Validate required fields
+        if not data.get('address') or not data.get('listen_port'):
+            return jsonify({'error': 'Address and listen port are required'}), 400
+        
+        # Get existing config or create new
+        config = get_wg_server_config() or {
+            'interface': WG_INTERFACE,
+            'peers': []
+        }
+        
+        # Generate new private key if none exists
+        if not config.get('private_key'):
+            private_key, _ = generate_wg_keys()
+            if not private_key:
+                return jsonify({'error': 'Failed to generate keys'}), 500
+            config['private_key'] = private_key
+        
+        # Update configuration
+        config['address'] = data['address']
+        config['listen_port'] = int(data['listen_port'])
+        
+        # Save configuration
+        if save_wg_server_config(config):
+            return jsonify({'message': 'Configuration saved successfully'})
+        else:
+            return jsonify({'error': 'Failed to save configuration'}), 500
+
+@app.route('/api/wireguard/start', methods=['POST'])
+@login_required
+def wg_start():
+    """Start WireGuard interface"""
+    success, message = start_wg_interface()
+    if success:
+        return jsonify({'message': message})
+    else:
+        return jsonify({'error': message}), 500
+
+@app.route('/api/wireguard/stop', methods=['POST'])
+@login_required
+def wg_stop():
+    """Stop WireGuard interface"""
+    success, message = stop_wg_interface()
+    if success:
+        return jsonify({'message': message})
+    else:
+        return jsonify({'error': message}), 500
+
+@app.route('/api/wireguard/restart', methods=['POST'])
+@login_required
+def wg_restart():
+    """Restart WireGuard interface"""
+    success, message = restart_wg_interface()
+    if success:
+        return jsonify({'message': message})
+    else:
+        return jsonify({'error': message}), 500
+
+@app.route('/api/wireguard/peers', methods=['GET', 'POST'])
+@login_required
+def wg_peers():
+    """Get all peers or add new peer"""
+    if request.method == 'GET':
+        config = get_wg_server_config()
+        if config:
+            return jsonify({'peers': config.get('peers', [])})
+        else:
+            return jsonify({'peers': []})
+    
+    elif request.method == 'POST':
+        data = request.get_json()
+        peer_name = data.get('name', '')
+        
+        if not peer_name:
+            return jsonify({'error': 'Peer name is required'}), 400
+        
+        # Get current server config
+        server_config = get_wg_server_config()
+        if not server_config:
+            return jsonify({'error': 'Server configuration not found'}), 404
+        
+        # Generate peer configuration
+        peer_data, public_key = generate_peer_config(peer_name, server_config)
+        if not peer_data:
+            return jsonify({'error': 'Failed to generate peer configuration'}), 500
+        
+        # Add peer to server config
+        new_peer = {
+            'public_key': public_key,
+            'allowed_ips': peer_data['allowed_ips'],
+            'endpoint': '',
+            'persistent_keepalive': 25
+        }
+        
+        server_config['peers'].append(new_peer)
+        
+        # Save updated server configuration
+        if save_wg_server_config(server_config):
+            # Restart interface to apply changes
+            restart_wg_interface()
+            
+            return jsonify({
+                'message': 'Peer added successfully',
+                'peer': peer_data
+            })
+        else:
+            return jsonify({'error': 'Failed to save server configuration'}), 500
+
+@app.route('/api/wireguard/peers/<public_key>', methods=['DELETE'])
+@login_required
+def wg_delete_peer(public_key):
+    """Delete peer"""
+    config = get_wg_server_config()
+    if not config:
+        return jsonify({'error': 'Server configuration not found'}), 404
+    
+    # Find and remove peer
+    original_count = len(config.get('peers', []))
+    config['peers'] = [p for p in config.get('peers', []) if p.get('public_key') != public_key]
+    
+    if len(config['peers']) == original_count:
+        return jsonify({'error': 'Peer not found'}), 404
+    
+    # Save updated configuration
+    if save_wg_server_config(config):
+        # Restart interface to apply changes
+        restart_wg_interface()
+        return jsonify({'message': 'Peer deleted successfully'})
+    else:
+        return jsonify({'error': 'Failed to save configuration'}), 500
+
+@app.route('/api/wireguard/peers/<public_key>/config')
+@login_required
+def wg_peer_config(public_key):
+    """Get peer configuration file"""
+    config = get_wg_server_config()
+    if not config:
+        return jsonify({'error': 'Server configuration not found'}), 404
+    
+    # Find peer
+    peer = None
+    for p in config.get('peers', []):
+        if p.get('public_key') == public_key:
+            peer = p
+            break
+    
+    if not peer:
+        return jsonify({'error': 'Peer not found'}), 404
+    
+    # Generate client config (this would need the peer's private key, 
+    # which we don't store for security reasons)
+    # For now, return the peer's server-side config
+    return jsonify({
+        'public_key': peer['public_key'],
+        'allowed_ips': peer['allowed_ips'],
+        'note': 'Client configuration requires the peer private key which is not stored on server'
+    })
+
 if __name__ == '__main__':
+    print("🚀 Initializing IptablesUI with WireGuard Server...")
     initialize_app()
     
     # Apply saved rules if auto_apply is enabled
     config = load_rules_config()
     if config.get('auto_apply', True):
-        print("Applying saved rules...")
+        print("📋 Applying saved iptables rules...")
         applied_count, errors = apply_saved_rules()
-        print(f"Applied {applied_count} saved rules")
+        print(f"✅ Applied {applied_count} saved iptables rules")
         if errors:
-            print(f"Errors: {errors}")
+            print(f"❌ Errors: {errors}")
+    
+    # Check for existing WireGuard configuration and start if available
+    print("🔍 Checking WireGuard configuration...")
+    wg_config = get_wg_server_config()
+    if wg_config and wg_config.get('address') and wg_config.get('private_key'):
+        print(f"📡 Found WireGuard config for {wg_config['address']} on port {wg_config.get('listen_port', 51820)}")
+        print(f"👥 Configured peers: {len(wg_config.get('peers', []))}")
+        
+        # Try to start WireGuard interface (will be handled by entrypoint script)
+        try:
+            result = subprocess.run(['wg', 'show', WG_INTERFACE], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                print(f"✅ WireGuard interface {WG_INTERFACE} is running")
+            else:
+                print(f"⏸️ WireGuard interface {WG_INTERFACE} not started (will be available via web UI)")
+        except Exception as e:
+            print(f"⚠️ Could not check WireGuard status: {e}")
+    else:
+        print("📝 No WireGuard configuration found - configure via web interface")
+    
+    print("🌐 Starting web server...")
+    print("📱 Web Interface will be available at: http://localhost:8080")
+    print("🔐 Default credentials: admin / change_me_please")
+    print("🔧 Configure WireGuard server in the WireGuard tab")
     
     app.run(host='0.0.0.0', port=8080, debug=False)

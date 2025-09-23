@@ -36,3 +36,6 @@ coverage.xml
 # Local data
 data/
 rules.json
+
+# Old entrypoint (replaced with S6 overlay)
+docker-entrypoint.sh

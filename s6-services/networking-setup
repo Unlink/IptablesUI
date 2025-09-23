@@ -1,0 +1,26 @@
+#!/command/with-contenv bash
+
+# S6 Overlay - Networking Setup Service
+# This service runs once at startup to configure networking for WireGuard
+
+s6-echo "🔧 [networking-setup] Setting up networking for WireGuard..."
+
+# Enable IP forwarding (critical for VPN routing)
+if echo 1 > /proc/sys/net/ipv4/ip_forward; then
+    s6-echo "✅ [networking-setup] IP forwarding enabled"
+else
+    s6-echo "⚠️ [networking-setup] Could not enable IP forwarding (may need privileged mode)"
+fi
+
+# Set source validation mark for WireGuard
+if echo 1 > /proc/sys/net/ipv4/conf/all/src_valid_mark; then
+    s6-echo "✅ [networking-setup] Source validation mark configured"
+else
+    s6-echo "⚠️ [networking-setup] Could not set src_valid_mark (may need privileged mode)"
+fi
+
+# Additional networking optimizations for VPN
+echo 0 > /proc/sys/net/ipv4/conf/all/rp_filter 2>/dev/null || true
+echo 0 > /proc/sys/net/ipv4/conf/default/rp_filter 2>/dev/null || true
+
+s6-echo "✅ [networking-setup] Networking configuration completed"

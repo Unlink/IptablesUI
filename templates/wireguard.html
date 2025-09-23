@@ -1,0 +1,510 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-12">
+            <h2>WireGuard Server Management</h2>
+            
+            <!-- Server Status -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>Server Status</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div id="server-status" class="mb-3">
+                                <span class="badge badge-secondary">Loading...</span>
+                            </div>
+                            <div class="btn-group" role="group">
+                                <button type="button" class="btn btn-success" onclick="startWireGuard()">
+                                    <i class="fas fa-play"></i> Start
+                                </button>
+                                <button type="button" class="btn btn-warning" onclick="stopWireGuard()">
+                                    <i class="fas fa-stop"></i> Stop
+                                </button>
+                                <button type="button" class="btn btn-info" onclick="restartWireGuard()">
+                                    <i class="fas fa-redo"></i> Restart
+                                </button>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div id="server-info">
+                                <!-- Server info will be loaded here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Server Configuration -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>Server Configuration</h5>
+                </div>
+                <div class="card-body">
+                    <form id="wg-config-form">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="wg-address" class="form-label">Server Address (CIDR)</label>
+                                    <input type="text" class="form-control" id="wg-address" 
+                                           placeholder="10.0.0.1/24" required>
+                                    <div class="form-text">Network address for VPN server and clients</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="wg-port" class="form-label">Listen Port</label>
+                                    <input type="number" class="form-control" id="wg-port" 
+                                           placeholder="51820" min="1" max="65535" required>
+                                    <div class="form-text">UDP port for WireGuard connections</div>
+                                </div>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> Save Configuration
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Peers Management -->
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5>Peers</h5>
+                    <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#addPeerModal">
+                        <i class="fas fa-plus"></i> Add Peer
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div id="peers-list">
+                        <!-- Peers will be loaded here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Active Connections -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>Active Connections</h5>
+                </div>
+                <div class="card-body">
+                    <div id="active-peers">
+                        <!-- Active peer connections will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Peer Modal -->
+<div class="modal fade" id="addPeerModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add New Peer</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="add-peer-form">
+                    <div class="mb-3">
+                        <label for="peer-name" class="form-label">Peer Name</label>
+                        <input type="text" class="form-control" id="peer-name" required>
+                        <div class="form-text">Friendly name for this peer (e.g., "John's Phone")</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="addPeer()">Add Peer</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Peer Config Modal -->
+<div class="modal fade" id="peerConfigModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Peer Configuration</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="peer-config-content">
+                    <!-- Peer configuration will be loaded here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" onclick="downloadConfig()">
+                    <i class="fas fa-download"></i> Download Config
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentPeerConfig = null;
+
+// Load server status and configuration
+function loadWireGuardStatus() {
+    fetch('/api/wireguard/status')
+        .then(response => response.json())
+        .then(data => {
+            updateServerStatus(data);
+        })
+        .catch(error => {
+            console.error('Error loading WireGuard status:', error);
+            document.getElementById('server-status').innerHTML = 
+                '<span class="badge badge-danger">Error loading status</span>';
+        });
+}
+
+function updateServerStatus(status) {
+    const statusElement = document.getElementById('server-status');
+    const infoElement = document.getElementById('server-info');
+    
+    if (status.running) {
+        statusElement.innerHTML = '<span class="badge badge-success">Running</span>';
+    } else {
+        statusElement.innerHTML = '<span class="badge badge-secondary">Stopped</span>';
+    }
+    
+    let infoHtml = '';
+    if (status.config_exists) {
+        infoHtml += `<strong>Interface:</strong> ${status.interface}<br>`;
+        infoHtml += `<strong>Listen Port:</strong> ${status.listen_port}<br>`;
+        infoHtml += `<strong>Address:</strong> ${status.address}<br>`;
+        infoHtml += `<strong>Peers:</strong> ${status.peer_count}`;
+        
+        // Update form with current values
+        document.getElementById('wg-address').value = status.address || '';
+        document.getElementById('wg-port').value = status.listen_port || 51820;
+    } else {
+        infoHtml = '<span class="text-muted">No configuration found</span>';
+    }
+    
+    infoElement.innerHTML = infoHtml;
+    
+    // Update active peers
+    if (status.active_peers) {
+        updateActivePeers(status.active_peers);
+    }
+}
+
+function updateActivePeers(peers) {
+    const container = document.getElementById('active-peers');
+    
+    if (peers.length === 0) {
+        container.innerHTML = '<p class="text-muted">No active connections</p>';
+        return;
+    }
+    
+    let html = '<div class="table-responsive"><table class="table table-sm">';
+    html += '<thead><tr><th>Public Key</th><th>Endpoint</th><th>Allowed IPs</th><th>Last Handshake</th><th>Transfer</th></tr></thead><tbody>';
+    
+    peers.forEach(peer => {
+        html += '<tr>';
+        html += `<td><code class="small">${peer.public_key.substring(0, 16)}...</code></td>`;
+        html += `<td>${peer.endpoint || '-'}</td>`;
+        html += `<td>${peer.allowed_ips || '-'}</td>`;
+        html += `<td>${peer.latest_handshake || '-'}</td>`;
+        html += `<td>↓${peer.transfer_rx} ↑${peer.transfer_tx}</td>`;
+        html += '</tr>';
+    });
+    
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+}
+
+// Load peers list
+function loadPeers() {
+    fetch('/api/wireguard/peers')
+        .then(response => response.json())
+        .then(data => {
+            updatePeersList(data.peers);
+        })
+        .catch(error => {
+            console.error('Error loading peers:', error);
+        });
+}
+
+function updatePeersList(peers) {
+    const container = document.getElementById('peers-list');
+    
+    if (peers.length === 0) {
+        container.innerHTML = '<p class="text-muted">No peers configured</p>';
+        return;
+    }
+    
+    let html = '<div class="table-responsive"><table class="table table-hover">';
+    html += '<thead><tr><th>Public Key</th><th>Allowed IPs</th><th>Actions</th></tr></thead><tbody>';
+    
+    peers.forEach(peer => {
+        html += '<tr>';
+        html += `<td><code class="small">${peer.public_key.substring(0, 32)}...</code></td>`;
+        html += `<td>${peer.allowed_ips}</td>`;
+        html += `<td>
+            <button class="btn btn-sm btn-info" onclick="showPeerConfig('${peer.public_key}')">
+                <i class="fas fa-qrcode"></i> Config
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="deletePeer('${peer.public_key}')">
+                <i class="fas fa-trash"></i> Delete
+            </button>
+        </td>`;
+        html += '</tr>';
+    });
+    
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+}
+
+// Server control functions
+function startWireGuard() {
+    fetch('/api/wireguard/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showAlert('Error starting WireGuard: ' + data.error, 'danger');
+        } else {
+            showAlert(data.message, 'success');
+            loadWireGuardStatus();
+        }
+    })
+    .catch(error => {
+        showAlert('Error starting WireGuard: ' + error, 'danger');
+    });
+}
+
+function stopWireGuard() {
+    fetch('/api/wireguard/stop', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showAlert('Error stopping WireGuard: ' + data.error, 'danger');
+        } else {
+            showAlert(data.message, 'success');
+            loadWireGuardStatus();
+        }
+    })
+    .catch(error => {
+        showAlert('Error stopping WireGuard: ' + error, 'danger');
+    });
+}
+
+function restartWireGuard() {
+    fetch('/api/wireguard/restart', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showAlert('Error restarting WireGuard: ' + data.error, 'danger');
+        } else {
+            showAlert(data.message, 'success');
+            loadWireGuardStatus();
+        }
+    })
+    .catch(error => {
+        showAlert('Error restarting WireGuard: ' + error, 'danger');
+    });
+}
+
+// Configuration functions
+document.getElementById('wg-config-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const address = document.getElementById('wg-address').value;
+    const port = parseInt(document.getElementById('wg-port').value);
+    
+    fetch('/api/wireguard/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            address: address,
+            listen_port: port
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showAlert('Error saving configuration: ' + data.error, 'danger');
+        } else {
+            showAlert(data.message, 'success');
+            loadWireGuardStatus();
+        }
+    })
+    .catch(error => {
+        showAlert('Error saving configuration: ' + error, 'danger');
+    });
+});
+
+// Peer management functions
+function addPeer() {
+    const name = document.getElementById('peer-name').value;
+    
+    if (!name) {
+        showAlert('Please enter a peer name', 'warning');
+        return;
+    }
+    
+    fetch('/api/wireguard/peers', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: name})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showAlert('Error adding peer: ' + data.error, 'danger');
+        } else {
+            showAlert(data.message, 'success');
+            document.getElementById('peer-name').value = '';
+            const modal = bootstrap.Modal.getInstance(document.getElementById('addPeerModal'));
+            if (modal) modal.hide();
+            loadPeers();
+            loadWireGuardStatus();
+            
+            // Show peer configuration
+            if (data.peer) {
+                currentPeerConfig = data.peer;
+                showPeerConfigModal(data.peer);
+            }
+        }
+    })
+    .catch(error => {
+        showAlert('Error adding peer: ' + error, 'danger');
+    });
+}
+
+function deletePeer(publicKey) {
+    if (!confirm('Are you sure you want to delete this peer?')) {
+        return;
+    }
+    
+    fetch(`/api/wireguard/peers/${publicKey}`, {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showAlert('Error deleting peer: ' + data.error, 'danger');
+        } else {
+            showAlert(data.message, 'success');
+            loadPeers();
+            loadWireGuardStatus();
+        }
+    })
+    .catch(error => {
+        showAlert('Error deleting peer: ' + error, 'danger');
+    });
+}
+
+function showPeerConfig(publicKey) {
+    fetch(`/api/wireguard/peers/${publicKey}/config`)
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showAlert('Error loading peer config: ' + data.error, 'danger');
+        } else {
+            showPeerConfigModal(data);
+        }
+    })
+    .catch(error => {
+        showAlert('Error loading peer config: ' + error, 'danger');
+    });
+}
+
+function showPeerConfigModal(peerData) {
+    const content = document.getElementById('peer-config-content');
+    
+    let html = `
+        <div class="mb-3">
+            <strong>Public Key:</strong><br>
+            <code class="small">${peerData.public_key}</code>
+        </div>
+        <div class="mb-3">
+            <strong>Allowed IPs:</strong><br>
+            <code>${peerData.allowed_ips}</code>
+        </div>
+    `;
+    
+    if (peerData.config) {
+        html += `
+            <div class="mb-3">
+                <strong>Client Configuration:</strong>
+                <textarea class="form-control" rows="12" readonly>${peerData.config}</textarea>
+            </div>
+        `;
+        currentPeerConfig = peerData;
+    } else {
+        html += `
+            <div class="alert alert-info">
+                ${peerData.note || 'Configuration not available'}
+            </div>
+        `;
+    }
+    
+    content.innerHTML = html;
+    const modal = new bootstrap.Modal(document.getElementById('peerConfigModal'));
+    modal.show();
+}
+
+function downloadConfig() {
+    if (!currentPeerConfig || !currentPeerConfig.config) {
+        showAlert('No configuration available to download', 'warning');
+        return;
+    }
+    
+    const blob = new Blob([currentPeerConfig.config], { type: 'text/plain' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = url;
+    a.download = `${currentPeerConfig.name || 'peer'}.conf`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+}
+
+function showAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    document.querySelector('.container-fluid').insertBefore(alertDiv, document.querySelector('.row'));
+    
+    setTimeout(() => {
+        if (alertDiv.parentNode) {
+            alertDiv.parentNode.removeChild(alertDiv);
+        }
+    }, 5000);
+}
+
+// Initialize page
+document.addEventListener('DOMContentLoaded', function() {
+    loadWireGuardStatus();
+    loadPeers();
+    
+    // Refresh status every 30 seconds
+    setInterval(() => {
+        loadWireGuardStatus();
+    }, 30000);
+});
+</script>
+{% endblock %}

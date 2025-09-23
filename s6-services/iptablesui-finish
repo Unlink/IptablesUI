@@ -1,0 +1,31 @@
+#!/command/with-contenv bash
+
+# S6 Overlay - IptablesUI Finish Service
+# This service runs when the main Flask app exits (cleanup)
+
+s6-echo "🛑 [iptablesui-finish] IptablesUI service stopping..."
+
+# Check if WireGuard interface is running and stop it gracefully
+WG_INTERFACE="wg0"
+
+if wg show "$WG_INTERFACE" >/dev/null 2>&1; then
+    s6-echo "🔌 [iptablesui-finish] Stopping WireGuard interface $WG_INTERFACE..."
+    
+    if wg-quick down "$WG_INTERFACE" 2>/dev/null; then
+        s6-echo "✅ [iptablesui-finish] WireGuard interface stopped successfully"
+    else
+        s6-echo "⚠️ [iptablesui-finish] Failed to stop WireGuard interface cleanly"
+    fi
+else
+    s6-echo "📴 [iptablesui-finish] WireGuard interface was not running"
+fi
+
+# Optional: Save current iptables state before shutdown
+# This could be implemented here if needed for persistence
+
+s6-echo "✅ [iptablesui-finish] Cleanup completed"
+
+# Exit code determines if S6 should restart the service
+# 0 = normal shutdown, don't restart
+# other = abnormal shutdown, restart
+exit 0

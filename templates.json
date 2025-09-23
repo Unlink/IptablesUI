@@ -1,0 +1,62 @@
+{
+  "templates": {
+    "vpn_basic": {
+      "name": "VPN Basic Access",
+      "description": "Allow VPN peer basic internet access",
+      "rules": [
+        {
+          "chain": "INPUT",
+          "protocol": "",
+          "source_ip": "{{peer_ip}}",
+          "action": "ACCEPT",
+          "comment": "Allow VPN peer {{peer_ip}}"
+        },
+        {
+          "chain": "FORWARD",
+          "protocol": "",
+          "source_ip": "{{peer_ip}}",
+          "action": "ACCEPT",
+          "comment": "Forward traffic from {{peer_ip}}"
+        }
+      ]
+    },
+    "web_server": {
+      "name": "Web Server Access", 
+      "description": "Allow HTTP/HTTPS access to server",
+      "rules": [
+        {
+          "chain": "INPUT",
+          "protocol": "tcp",
+          "port": "80",
+          "action": "ACCEPT",
+          "comment": "Allow HTTP traffic"
+        },
+        {
+          "chain": "INPUT", 
+          "protocol": "tcp",
+          "port": "443",
+          "action": "ACCEPT",
+          "comment": "Allow HTTPS traffic"
+        }
+      ]
+    },
+    "block_peer": {
+      "name": "Block VPN Peer",
+      "description": "Block all traffic from specific peer",
+      "rules": [
+        {
+          "chain": "INPUT",
+          "source_ip": "{{peer_ip}}",
+          "action": "DROP",
+          "comment": "Block peer {{peer_ip}}"
+        },
+        {
+          "chain": "FORWARD",
+          "source_ip": "{{peer_ip}}",
+          "action": "DROP", 
+          "comment": "Block forwarding from {{peer_ip}}"
+        }
+      ]
+    }
+  }
+}

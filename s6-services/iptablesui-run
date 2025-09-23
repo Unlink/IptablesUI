@@ -1,0 +1,17 @@
+#!/command/with-contenv bash
+
+# S6 Overlay - IptablesUI Main Service
+# This is the main long-running Flask application
+
+s6-echo "🚀 [iptablesui] Starting IptablesUI Flask application..."
+
+# Change to app directory
+cd /app
+
+# Display startup information
+s6-echo "📱 [iptablesui] Web interface will be available at: http://localhost:8080"
+s6-echo "👤 [iptablesui] Default username: ${ADMIN_USER:-admin}"
+s6-echo "🔑 [iptablesui] Default password: ${ADMIN_PASS:-password}"
+
+# Set up proper signal handling for graceful shutdown
+exec python app.py
